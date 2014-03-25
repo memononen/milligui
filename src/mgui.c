@@ -11,17 +11,20 @@ static int maxi(int a, int b) { return a > b ? a : b; }
 static float minf(float a, float b) { return a < b ? a : b; }
 static float maxf(float a, float b) { return a > b ? a : b; }
 
-
-enum MGwidgetType {
-	MG_PANEL,
-	MG_TEXT,
-	MG_ICON,
-	MG_SELECT,
-	MG_SLIDER,
-	MG_NUMBERBOX,
-	MG_TEXTBOX,
-};
-
+#define LABEL_SIZE 14
+#define TEXT_SIZE 18
+#define BUTTON_PADX 10
+#define BUTTON_PADY 5
+#define SPACING 7
+#define LABEL_SPACING 2
+#define DEFAULT_SLIDERW (TEXT_SIZE*6)
+#define DEFAULT_TEXTW (TEXT_SIZE*9)
+#define DEFAULT_NUMBERW (TEXT_SIZE*3)
+#define PANEL_PAD 5
+#define SLIDER_HANDLE ((int)(TEXT_SIZE*0.75f))
+#define CHECKBOX_SIZE (TEXT_SIZE)
+#define SCROLL_SIZE (TEXT_SIZE/4)
+#define SCROLL_PAD (SCROLL_SIZE/2)
 
 #define TEXT_POOL_SIZE 8000
 
@@ -49,51 +52,13 @@ static char* allocTextLen(const char* text, int len)
 	return dst;
 }
 
-#define WIDGET_POOL_SIZE 1000
+#define MG_WIDGET_POOL_SIZE 1000
 
-struct MGwidget {
-	int type;
-	unsigned int id;
-	
-	float x, y, width, height;
-	float cwidth, cheight;	// Content size
-	float spacing;
-	float paddingx, paddingy;
-	float fontSize;
-	unsigned char grow;
-	unsigned char textAlign;
-	unsigned char align;
-	unsigned char dir;
-	unsigned char overflow;
-
-	union {
-		struct {
-			char* text;
-		} text;
-		struct {
-			char* text;
-			int maxtext;
-		} textbox;
-		struct {
-			float value;
-		} number;
-		struct {
-			float value;
-			float vmin;
-			float vmax;
-		} slider;
-		struct {
-			unsigned int panelId;
-			unsigned int widgetId;
-			struct MGwidget* children;
-		} panel;
-	};
-	struct MGwidget* next;
-};
-struct MGwidget widgetPool[WIDGET_POOL_SIZE];
+struct MGwidget widgetPool[MG_WIDGET_POOL_SIZE];
 static int widgetPoolSize = 0;
 
-#define MG_PANEL_STACK_SIZE 100
+#define MG_BOX_STACK_SIZE 100
+#define MG_ID_STACK_SIZE 100
 #define MG_MAX_PANELS 100
 
 struct MUIstate
@@ -107,42 +72,73 @@ struct MUIstate
 	int wentActive;
 	int dragX, dragY;
 	float dragOrig;
-	int widgetX, widgetY, widgetW, widgetH;
-	unsigned int panelId;
-	unsigned int widgetId;
-	struct MGwidget* stack[MG_PANEL_STACK_SIZE];
-	int nstack;
+
+	struct MGwidget* boxStack[MG_BOX_STACK_SIZE];
+	int boxStackCount;
+
+	int idStack[MG_ID_STACK_SIZE];
+	int idStackCount;
+
+	struct MGwidget* panels[MG_MAX_PANELS];
+	int panelCount;
+
 	struct NVGcontext* vg;
 
 	int width, height;
-
-	struct MGwidget* panels[MG_MAX_PANELS];
-	int npanels;
 };
 
 static struct MUIstate state;
 
+static void addPanel(struct MGwidget* w)
+{
+	if (state.panelCount < MG_MAX_PANELS)
+		state.panels[state.panelCount++] = w;
+}
+
+static void pushBox(struct MGwidget* w)
+{
+	if (state.boxStackCount < MG_BOX_STACK_SIZE)
+		state.boxStack[state.boxStackCount++] = w;
+}
+
+static struct MGwidget* popBox()
+{
+	if (state.boxStackCount > 0)
+		return state.boxStack[--state.boxStackCount];
+	return NULL;
+}
+
+static int pushId()
+{
+	if (state.idStackCount < MG_ID_STACK_SIZE)
+		state.idStack[state.idStackCount++] = 0;
+}
+
+static void popId()
+{
+	if (state.idStackCount > 0)
+		state.idStackCount--;
+}
+
+
 static struct MGwidget* getParent()
 {
-	if (state.nstack == 0) return NULL;
-	return state.stack[state.nstack-1];
+	if (state.boxStackCount == 0) return NULL;
+	return state.boxStack[state.boxStackCount-1];
 }
 
-static unsigned int getPanelId(struct MGwidget* w)
+static int genId()
 {
-	return w == NULL ? 0 : w->panel.panelId;
-}
-
-static unsigned int getWidgetId(struct MGwidget* w)
-{
-	return w == NULL ? ++state.widgetId : ++(w->panel.widgetId);
+	if (state.idStackCount == 0) return 0;
+	state.idStack[state.idStackCount-1]++;
+	return (state.panelCount << 16) | state.idStack[state.idStackCount-1];
 }
 
 static void addChildren(struct MGwidget* parent, struct MGwidget* w)
 {
 	struct MGwidget** prev = NULL;
 	if (parent == NULL) return;
-	prev = &parent->panel.children;
+	prev = &parent->box.children;
 	while (*prev != NULL)
 		prev = &(*prev)->next;
 	*prev = w;
@@ -152,11 +148,11 @@ static struct MGwidget* allocWidget(int type)
 {
 	struct MGwidget* parent = getParent();
 	struct MGwidget* w = NULL;
-	if (widgetPoolSize+1 > WIDGET_POOL_SIZE)
+	if (widgetPoolSize+1 > MG_WIDGET_POOL_SIZE)
 		return NULL;
 	w = &widgetPool[widgetPoolSize++];
 	memset(w, 0, sizeof(*w));
-	w->id = (getPanelId(parent) << 16) | getPanelId(parent);
+	w->id = genId();
 	w->type = type;
 	addChildren(parent, w);
 	return w;
@@ -250,7 +246,7 @@ void mgTerminate()
 
 }
 
-void mgBeginFrame(struct NVGcontext* vg, int width, int height, int mx, int my, int mbut)
+void mgFrameBegin(struct NVGcontext* vg, int width, int height, int mx, int my, int mbut)
 {
 	state.mx = mx;
 	state.my = my;
@@ -266,37 +262,15 @@ void mgBeginFrame(struct NVGcontext* vg, int width, int height, int mx, int my, 
 	state.isActive = 0;
 	state.isHot = 0;
 
-	state.widgetX = 0;
-	state.widgetY = 0;
-	state.widgetW = 0;
-	state.widgetH = 0;
-
-	state.panelId = 1;
-	state.widgetId = 1;
-
 	state.vg = vg;
 
-	state.nstack = 0;
-	state.npanels = 0;
+	state.boxStackCount = 0;
+	state.idStackCount = 0;
+	state.panelCount = 0;
 
 	textPoolSize = 0;
 	widgetPoolSize = 0;
 }
-
-#define LABEL_SIZE 14
-#define TEXT_SIZE 18
-#define BUTTON_PADX 10
-#define BUTTON_PADY 5
-#define SPACING 7
-#define LABEL_SPACING 2
-#define DEFAUL_SLIDERW (TEXT_SIZE*6)
-#define DEFAUL_TEXTW (TEXT_SIZE*9)
-#define DEFAUL_NUMBERW (TEXT_SIZE*3)
-#define PANEL_PAD 5
-#define SLIDER_HANDLE ((int)(TEXT_SIZE*0.75f))
-#define CHECKBOX_SIZE (TEXT_SIZE)
-#define SCROLL_SIZE (TEXT_SIZE/4)
-#define SCROLL_PAD (SCROLL_SIZE/2)
 
 static void updateLogic()
 {
@@ -347,7 +321,7 @@ static void drawPanel(struct MGwidget* panel, const float* bounds)
 	if (pbounds[2] < 0.5f || pbounds[3] < 0.5f)
 		return;
 
-	for (w = panel->panel.children; w != NULL; w = w->next) {
+	for (w = panel->box.children; w != NULL; w = w->next) {
 
 		if (!visible(pbounds, w->x, w->y, w->width, w->height))
 			continue;
@@ -355,7 +329,7 @@ static void drawPanel(struct MGwidget* panel, const float* bounds)
 		nvgScissor(state.vg, pbounds[0], pbounds[1], pbounds[2], pbounds[3]);
 
 		switch (w->type) {
-		case MG_PANEL:
+		case MG_BOX:
 			drawPanel(w, pbounds);
 			break;
 /*		case MG_BUTTON:
@@ -380,16 +354,16 @@ static void drawPanel(struct MGwidget* panel, const float* bounds)
 			if (wbounds[2] > 0.0f && wbounds[3] > 0.0f) {
 				nvgScissor(state.vg, wbounds[0], wbounds[1], wbounds[2], wbounds[3]);
 				nvgFillColor(state.vg, nvgRGBA(255,255,255,255));
-				nvgFontSize(state.vg, w->fontSize);
-				if (w->textAlign == MG_CENTER) {
+				nvgFontSize(state.vg, w->args.fontSize);
+				if (w->args.textAlign == MG_CENTER) {
 					nvgTextAlign(state.vg, NVG_ALIGN_CENTER|NVG_ALIGN_MIDDLE);
 					nvgText(state.vg, w->x + w->width/2, w->y + w->height/2, w->text.text, NULL);
-				} else if (w->textAlign == MG_END) {
+				} else if (w->args.textAlign == MG_END) {
 					nvgTextAlign(state.vg, NVG_ALIGN_RIGHT|NVG_ALIGN_MIDDLE);
-					nvgText(state.vg, w->x + w->width, w->y + w->height/2, w->text.text, NULL);
+					nvgText(state.vg, w->x + w->width - w->args.paddingx, w->y + w->height/2, w->text.text, NULL);
 				} else {
 					nvgTextAlign(state.vg, NVG_ALIGN_LEFT|NVG_ALIGN_MIDDLE);
-					nvgText(state.vg, w->x, w->y + w->height/2, w->text.text, NULL);
+					nvgText(state.vg, w->x + w->args.paddingx, w->y + w->height/2, w->text.text, NULL);
 				}
 			}
 			break;
@@ -423,26 +397,7 @@ static void drawPanel(struct MGwidget* panel, const float* bounds)
 			nvgStroke(state.vg);
 			break;
 
-		case MG_NUMBERBOX:
-			nvgBeginPath(state.vg);
-			nvgRect(state.vg, w->x+0.5f, w->y+0.5f, w->width-1, w->height-1);
-			nvgStrokeColor(state.vg, nvgRGBA(255,255,255,128));
-			nvgStrokeWidth(state.vg,1.0f);
-			nvgStroke(state.vg);
-
-			isectBounds(wbounds, pbounds, w->x, w->y, w->width, w->height);
-			if (wbounds[2] > 0.0f && wbounds[3] > 0.0f) {
-				nvgScissor(state.vg, wbounds[0], wbounds[1], wbounds[2], wbounds[3]);
-				snprintf(str, sizeof(str), "%.2f", w->number.value);
-				str[sizeof(str)-1] = '\0';
-				nvgFillColor(state.vg, nvgRGBA(255,255,255,255));
-				nvgFontSize(state.vg, TEXT_SIZE);
-				nvgTextAlign(state.vg, NVG_ALIGN_RIGHT|NVG_ALIGN_MIDDLE);
-				nvgText(state.vg, w->x + w->width - BUTTON_PADY, w->y + w->height/2, str, NULL);
-			}
-			break;
-
-		case MG_TEXTBOX:
+		case MG_INPUT:
 			nvgBeginPath(state.vg);
 			nvgRect(state.vg, w->x+0.5f, w->y+0.5f, w->width-1, w->height-1);
 			nvgStrokeColor(state.vg, nvgRGBA(255,255,255,128));
@@ -453,24 +408,32 @@ static void drawPanel(struct MGwidget* panel, const float* bounds)
 			if (wbounds[2] > 0.0f && wbounds[3] > 0.0f) {
 				nvgScissor(state.vg, wbounds[0], wbounds[1], wbounds[2], wbounds[3]);
 				nvgFillColor(state.vg, nvgRGBA(255,255,255,255));
-				nvgFontSize(state.vg, TEXT_SIZE);
-				nvgTextAlign(state.vg, NVG_ALIGN_LEFT|NVG_ALIGN_MIDDLE);
-				nvgText(state.vg, w->x + BUTTON_PADY, w->y + w->height/2, w->textbox.text, NULL);
+				nvgFontSize(state.vg, w->args.fontSize);
+				if (w->args.textAlign == MG_CENTER) {
+					nvgTextAlign(state.vg, NVG_ALIGN_CENTER|NVG_ALIGN_MIDDLE);
+					nvgText(state.vg, w->x + w->width/2, w->y + w->height/2, w->input.text, NULL);
+				} else if (w->args.textAlign == MG_END) {
+					nvgTextAlign(state.vg, NVG_ALIGN_RIGHT|NVG_ALIGN_MIDDLE);
+					nvgText(state.vg, w->x + w->width - w->args.paddingx, w->y + w->height/2, w->input.text, NULL);
+				} else {
+					nvgTextAlign(state.vg, NVG_ALIGN_LEFT|NVG_ALIGN_MIDDLE);
+					nvgText(state.vg, w->x + w->args.paddingx, w->y + w->height/2, w->input.text, NULL);
+				}
 			}
 			break;
 		}
 	}
 
-	if (panel->overflow == MG_SCROLL) {
+	if (panel->args.overflow == MG_SCROLL) {
 		nvgScissor(state.vg, pbounds[0], pbounds[1], pbounds[2], pbounds[3]);
 		if (panel->dir == MG_ROW) {
-			if (panel->cwidth > 0 && panel->cwidth > panel->width) {
+			if (panel->args.width > 0 && panel->args.width > panel->width) {
 				float x = panel->x + SCROLL_PAD;
 				float y = panel->y + panel->height - (SCROLL_SIZE + SCROLL_PAD);
 				float w = maxf(0, panel->width - SCROLL_PAD*2);
 				float h = SCROLL_SIZE;
 				float x2 = x;
-				float w2 = (panel->width / panel->cwidth) * w;
+				float w2 = (panel->width / panel->args.width) * w;
 				nvgBeginPath(state.vg);
 				nvgRect(state.vg, x, y, w, h);
 				nvgFillColor(state.vg, nvgRGBA(0,0,0,64));
@@ -481,13 +444,13 @@ static void drawPanel(struct MGwidget* panel, const float* bounds)
 				nvgFill(state.vg);
 			}
 		} else {
-			if (panel->cheight > 0 && panel->cheight > panel->height) {
+			if (panel->args.height > 0 && panel->args.height > panel->height) {
 				float x = panel->x + panel->width - (SCROLL_SIZE + SCROLL_PAD);
 				float y = panel->y + SCROLL_PAD;
 				float w = SCROLL_SIZE;
 				float h = maxf(0, panel->height - SCROLL_PAD*2);
 				float y2 = y;
-				float h2 = (panel->height / panel->cheight) * h;
+				float h2 = (panel->height / panel->args.height) * h;
 				nvgBeginPath(state.vg);
 				nvgRect(state.vg, x, y, w, h);
 				nvgFillColor(state.vg, nvgRGBA(0,0,0,64));
@@ -502,7 +465,7 @@ static void drawPanel(struct MGwidget* panel, const float* bounds)
 
 } 
 
-void mgEndFrame()
+void mgFrameEnd()
 {
 	int i;
 	float bounds[4] = {0, 0, state.width, state.height};
@@ -510,7 +473,7 @@ void mgEndFrame()
 	updateLogic();
 
 	if (state.vg != NULL) {
-		for (i = 0; i < state.npanels; i++)
+		for (i = 0; i < state.panelCount; i++)
 			drawPanel(state.panels[i], bounds);
 	}
 
@@ -536,25 +499,25 @@ static void fitToContent(struct MGwidget* root)
 {
 	struct MGwidget* w = NULL;
 
-	root->cwidth = 0;
-	root->cheight = 0;
+	root->args.width = 0;
+	root->args.height = 0;
 
 	if (root->dir == MG_COL) {
-		for (w = root->panel.children; w != NULL; w = w->next) {
-			root->cwidth = maxf(root->cwidth, w->cwidth);
-			root->cheight += w->cheight;
-			if (w->next != NULL) root->cheight += w->spacing;
+		for (w = root->box.children; w != NULL; w = w->next) {
+			root->args.width = maxf(root->args.width, w->args.width);
+			root->args.height += w->args.height;
+			if (w->next != NULL) root->args.height += w->args.spacing;
 		}
 	} else {
-		for (w = root->panel.children; w != NULL; w = w->next) {
-			root->cwidth += w->cwidth;
-			root->cheight = maxf(root->cheight, w->cheight);
-			if (w->next != NULL) root->cwidth += w->spacing;
+		for (w = root->box.children; w != NULL; w = w->next) {
+			root->args.width += w->args.width;
+			root->args.height = maxf(root->args.height, w->args.height);
+			if (w->next != NULL) root->args.width += w->args.spacing;
 		}
 	}
 
-	root->cwidth += root->paddingx*2;
-	root->cheight += root->paddingy*2;
+	root->args.width += root->args.paddingx*2;
+	root->args.height += root->args.paddingy*2;
 }
 
 static void layoutWidgets(struct MGwidget* root)
@@ -565,50 +528,50 @@ static void layoutWidgets(struct MGwidget* root)
 	int ngrow = 0, nitems = 0;
 
 	if (root->width == MG_AUTO_SIZE)
-		root->width = root->cwidth;
+		root->width = root->args.width;
 	if (root->height == MG_AUTO_SIZE)
-		root->height = root->cheight;
+		root->height = root->args.height;
 
-	x = root->x + root->paddingx;
-	y = root->y + root->paddingy;
-	rw = maxf(0, root->width - root->paddingx*2);
-	rh = maxf(0, root->height - root->paddingy*2);
+	x = root->x + root->args.paddingx;
+	y = root->y + root->args.paddingy;
+	rw = maxf(0, root->width - root->args.paddingx*2);
+	rh = maxf(0, root->height - root->args.paddingy*2);
 
 	// Allocate space for scrollbar
-	if (root->overflow == MG_SCROLL) {
+	if (root->args.overflow == MG_SCROLL) {
 		if (root->dir == MG_ROW) {
-			if (root->cwidth > 0 && root->cwidth > root->width)
+			if (root->args.width > 0 && root->args.width > root->width)
 				rh = maxf(0, rh - (SCROLL_SIZE+SCROLL_PAD*2));
 		} else {
-			if (root->cheight > 0 && root->cheight > root->height)
+			if (root->args.height > 0 && root->args.height > root->height)
 				rw = maxf(0, rw - (SCROLL_SIZE+SCROLL_PAD*2));
 		}
 	}
 
 	if (root->dir == MG_COL) {
 
-		for (w = root->panel.children; w != NULL; w = w->next) {
-			sum += w->cheight;
-			if (w->next != NULL) sum += w->spacing;
-			ngrow += w->grow;
+		for (w = root->box.children; w != NULL; w = w->next) {
+			sum += w->args.height;
+			if (w->next != NULL) sum += w->args.spacing;
+			ngrow += w->args.grow;
 			nitems++;
 		}
 
 		avail = rh - sum;
-		if (root->overflow != MG_FIT)
+		if (root->args.overflow != MG_FIT)
 			avail = maxf(0, avail); 
 
-		for (w = root->panel.children; w != NULL; w = w->next) {
+		for (w = root->box.children; w != NULL; w = w->next) {
 			w->x = x;
 			w->y = y;
-			w->height = w->cheight;
+			w->height = w->args.height;
 			if (ngrow > 0)
-				w->height += (float)w->grow/(float)ngrow * avail;
+				w->height += (float)w->args.grow/(float)ngrow * avail;
 			else if (avail < 0)
 				w->height += 1.0f/(float)nitems * avail;
 
-			w->width = minf(rw, w->cwidth);
-			switch (root->align) {
+			w->width = minf(rw, w->args.width);
+			switch (root->args.align) {
 			case MG_END:
 				w->x += rw - w->width;
 				break;
@@ -622,36 +585,36 @@ static void layoutWidgets(struct MGwidget* root)
 				break;
 			}
 
-			y += w->height + w->spacing;
+			y += w->height + w->args.spacing;
 
-			if (w->type == MG_PANEL)
+			if (w->type == MG_BOX)
 				layoutWidgets(w);
 		}
 
 	} else {
 
-		for (w = root->panel.children; w != NULL; w = w->next) {
-			sum += w->cwidth;
-			if (w->next != NULL) sum += w->spacing;
-			ngrow += w->grow;
+		for (w = root->box.children; w != NULL; w = w->next) {
+			sum += w->args.width;
+			if (w->next != NULL) sum += w->args.spacing;
+			ngrow += w->args.grow;
 			nitems++;
 		}
 
 		avail = rw - sum;
-		if (root->overflow != MG_FIT)
+		if (root->args.overflow != MG_FIT)
 			avail = maxf(0, avail); 
 
-		for (w = root->panel.children; w != NULL; w = w->next) {
+		for (w = root->box.children; w != NULL; w = w->next) {
 			w->x = x;
 			w->y = y;
-			w->width = w->cwidth;
+			w->width = w->args.width;
 			if (ngrow > 0)
-				w->width += (float)w->grow/(float)ngrow * avail;
+				w->width += (float)w->args.grow/(float)ngrow * avail;
 			else if (avail < 0)
 				w->width += 1.0f/(float)nitems * avail;
 
-			w->height = minf(rh, w->cheight);
-			switch (root->align) {
+			w->height = minf(rh, w->args.height);
+			switch (root->args.align) {
 			case MG_END:
 				w->y += rh - w->height;
 				break;
@@ -665,9 +628,9 @@ static void layoutWidgets(struct MGwidget* root)
 				break;
 			}
 
-			x += w->width + w->spacing;
+			x += w->width + w->args.spacing;
 
-			if (w->type == MG_PANEL)
+			if (w->type == MG_BOX)
 				layoutWidgets(w);
 		}
 
@@ -726,84 +689,58 @@ struct MGargs mgMergeArgs(struct MGargs dst, struct MGargs src)
 	if (isArgSet(&src, MG_OVERFLOW_ARG))	dst.overflow = src.overflow;
 	if (isArgSet(&src, MG_FONTSIZE_ARG))	dst.fontSize = src.fontSize;
 	if (isArgSet(&src, MG_TEXTALIGN_ARG))	dst.textAlign = src.textAlign;
+	dst.set |= src.set;
 	return dst;
-}
-
-static void applyArgs(struct MGwidget* w, struct MGargs* args)
-{
-	if (isArgSet(args, MG_WIDTH_ARG))		w->width = args->width;
-	if (isArgSet(args, MG_HEIGHT_ARG))	w->height = args->height;
-	if (isArgSet(args, MG_SPACING_ARG))	w->spacing = args->spacing;
-	if (isArgSet(args, MG_PADDINGX_ARG))	w->paddingx = args->paddingx;
-	if (isArgSet(args, MG_PADDINGY_ARG))	w->paddingy = args->paddingy;
-	if (isArgSet(args, MG_GROW_ARG))		w->grow = args->grow;
-	if (isArgSet(args, MG_ALIGN_ARG))		w->align = args->align;
-	if (isArgSet(args, MG_OVERFLOW_ARG))	w->overflow = args->overflow;
-	if (isArgSet(args, MG_FONTSIZE_ARG))	w->fontSize = args->fontSize;
-	if (isArgSet(args, MG_TEXTALIGN_ARG))	w->textAlign = args->textAlign;
 }
 
 int mgPanelBegin(int dir, float x, float y, float width, float height, struct MGargs args)
 {
-	struct MGwidget* w = allocWidget(MG_PANEL);
+	struct MGwidget* w = allocWidget(MG_BOX);
 
 	w->x = x;
 	w->y = y;
 	w->width = width;
 	w->height = height;
 	w->dir = dir;
-	applyArgs(w, &args);
+	w->args = mgMergeArgs(w->args, args);
 
-	state.panelId++;
-	w->panel.panelId = state.panelId;
-
-	if (state.nstack < MG_PANEL_STACK_SIZE)
-		state.stack[state.nstack++] = w;
-
-	if (state.npanels < MG_MAX_PANELS)
-		state.panels[state.npanels++] = w;
+	addPanel(w);
+	pushId();
+	pushBox(w);
 
 	return 0;
 }
 
 int mgPanelEnd()
 {
-	struct MGwidget* panel = NULL;
-	if (state.nstack > 0) {
-		state.nstack--;
-		panel = state.stack[state.nstack];
+	struct MGwidget* panel = popBox();
+	if (panel != NULL) {
 		fitToContent(panel);
 		layoutWidgets(panel);
 	}
+	popId();
 	return 0;
 }
 
-int mgDivBegin(int dir, struct MGargs args)
+int mgBoxBegin(int dir, struct MGargs args)
 {
-	struct MGwidget* w = allocWidget(MG_PANEL);
+	struct MGwidget* w = allocWidget(MG_BOX);
 
 	w->width = MG_AUTO_SIZE;
 	w->height = MG_AUTO_SIZE;
 	w->dir = dir;
-	applyArgs(w, &args);
+	w->args = mgMergeArgs(w->args, args);
 
-	state.panelId++;
-	w->panel.panelId = state.panelId;
-
-	if (state.nstack < MG_PANEL_STACK_SIZE)
-		state.stack[state.nstack++] = w;
+	pushBox(w);
 
 	return 0;
 }
 
-int mgDivEnd()
+int mgBoxEnd()
 {
-	struct MGwidget* div = NULL;
-	if (state.nstack > 0) {
-		state.nstack--;
-		div = state.stack[state.nstack];
-		fitToContent(div);
-	}
+	struct MGwidget* box = popBox();
+	if (box != NULL)
+		fitToContent(box);
 	return 0;
 }
 
@@ -814,14 +751,18 @@ int mgText(const char* text, struct MGargs args)
 
 	w->text.text = allocText(text);
 
-	w->spacing = SPACING;
-	w->fontSize = TEXT_SIZE;
-	w->textAlign = MG_START;
-	applyArgs(w, &args);
+	w->args.spacing = SPACING;
+	w->args.fontSize = TEXT_SIZE;
+	w->args.textAlign = MG_START;
 
-	textSize(w->text.text, w->fontSize, &tw, &th);
-	w->cwidth = tw;
-	w->cheight = th;
+	textSize(w->text.text, w->args.fontSize, &tw, &th);
+	w->args.width = tw;
+	w->args.height = th;
+
+	w->args = mgMergeArgs(w->args, args);
+
+	w->args.width += w->args.paddingx*2;
+	w->args.height += w->args.paddingy*2;
 
 	return 0;
 }
@@ -830,10 +771,14 @@ int mgIcon(int width, int height, struct MGargs args)
 {
 	struct MGwidget* w = allocWidget(MG_ICON);
 
-	w->cwidth = width;
-	w->cheight = height;
-	w->spacing = SPACING;
-	applyArgs(w, &args);
+	w->args.width = width;
+	w->args.height = height;
+	w->args.spacing = SPACING;
+
+	w->args = mgMergeArgs(w->args, args);
+
+	w->args.width += w->args.paddingx*2;
+	w->args.height += w->args.paddingy*2;
 
 	return 0;
 }
@@ -847,103 +792,123 @@ int mgSlider(float* value, float vmin, float vmax, struct MGargs args)
 	w->slider.vmin = vmin;
 	w->slider.vmax = vmax;
 
-	w->spacing = SPACING;
-	w->fontSize = TEXT_SIZE;
-	applyArgs(w, &args);
+	w->args.spacing = SPACING;
+	w->args.fontSize = TEXT_SIZE;
+	w->args.paddingx = 0;
+	w->args.paddingy = BUTTON_PADY;
 
-	textSize(NULL, w->fontSize, &tw,&th);
-	w->cwidth = DEFAUL_SLIDERW;
-	w->cheight = BUTTON_PADY + th + BUTTON_PADY;
+	textSize(NULL, w->args.fontSize, &tw,&th);
+	w->args.width = DEFAULT_SLIDERW;
+	w->args.height = th;
+
+	w->args = mgMergeArgs(w->args, args);
+
+	w->args.width += w->args.paddingx*2;
+	w->args.height += w->args.paddingy*2;
+
+	return 0;
+}
+
+int mgInput(char* text, int maxtext, struct MGargs args)
+{
+	float tw, th;
+	struct MGwidget* w = allocWidget(MG_INPUT);
+
+	w->input.text = allocTextLen(text, maxtext);
+	w->input.maxtext = maxtext;
+
+	w->args.spacing = SPACING;
+	w->args.fontSize = TEXT_SIZE;
+	w->args.textAlign = MG_START;
+	w->args.paddingx = BUTTON_PADX/2;
+	w->args.paddingy = BUTTON_PADY;
+
+	textSize(NULL, w->args.fontSize, &tw,&th);
+	w->args.width = DEFAULT_TEXTW;
+	w->args.height = th;
+
+	w->args = mgMergeArgs(w->args, args);
+
+	w->args.width += w->args.paddingx*2;
+	w->args.height += w->args.paddingy*2;
 
 	return 0;
 }
 
 int mgNumber(float* value, struct MGargs args)
 {
+	char str[32];
+
+	snprintf(str, sizeof(str), "%.2f", *value);
+	str[sizeof(str)-1] = '\0';
+
+	args = mgMergeArgs(args, mgArgs(mgTextAlign(MG_END), mgWidth(DEFAULT_NUMBERW)));
+
+	return mgInput(str, sizeof(str), args);
+/*
 	float tw, th;
 	struct MGwidget* w = allocWidget(MG_NUMBERBOX);
 
 	w->number.value = *value;
 
-	w->spacing = SPACING;
-	w->fontSize = TEXT_SIZE;
-	w->textAlign = MG_END;
+	w->args.spacing = SPACING;
+	w->args.fontSize = TEXT_SIZE;
+	w->args.textAlign = MG_END;
 	applyArgs(w, &args);
 
-	textSize(NULL, w->fontSize, &tw,&th);
-	w->cwidth = DEFAUL_NUMBERW;
-	w->cheight = BUTTON_PADY + th + BUTTON_PADY;
-
-	return 0;
-}
-
-int mgTextBox(char* text, int maxtext, struct MGargs args)
-{
-	float tw, th;
-	struct MGwidget* w = allocWidget(MG_TEXTBOX);
-
-	w->textbox.text = allocTextLen(text, maxtext);
-	w->textbox.maxtext = maxtext;
-
-	w->spacing = SPACING;
-	w->fontSize = TEXT_SIZE;
-	w->textAlign = MG_START;
-	applyArgs(w, &args);
-
-	textSize(NULL, w->fontSize, &tw,&th);
-	w->cwidth = DEFAUL_TEXTW;
-	w->cheight = BUTTON_PADY + th + BUTTON_PADY;
-
-	return 0;
+	textSize(NULL, w->args.fontSize, &tw,&th);
+	w->args.width = DEFAULT_NUMBERW;
+	w->args.height = BUTTON_PADY + th + BUTTON_PADY;
+	return 0;*/
 }
 
 int mgNumber3(float* x, float* y, float* z, const char* units, struct MGargs args)
 {
-	struct MGargs divArgs = mgMergeArgs(mgArgs(mgAlign(MG_CENTER), mgSpacing(SPACING)), args);
-	mgDivBegin(MG_ROW, divArgs);
+	struct MGargs boxArgs = mgMergeArgs(mgArgs(mgAlign(MG_CENTER), mgSpacing(SPACING)), args);
+	mgBoxBegin(MG_ROW, boxArgs);
 		mgNumber(x, mgArgs(mgGrow(1)));
 		mgNumber(y, mgArgs(mgGrow(1)));
 		mgNumber(z, mgArgs(mgGrow(1)));
 		if (units != NULL && strlen(units) > 0)
 			mgText(units, mgArgs(mgFontSize(LABEL_SIZE), mgSpacing(LABEL_SPACING)));
-	return mgDivEnd();
+	return mgBoxEnd();
 }
 
 int mgColor(float* r, float* g, float* b, float* a, struct MGargs args)
 {
-	struct MGargs divArgs = mgMergeArgs(mgArgs(mgAlign(MG_CENTER), mgSpacing(SPACING)), args);
+	struct MGargs boxArgs = mgMergeArgs(mgArgs(mgAlign(MG_CENTER), mgSpacing(SPACING)), args);
 	struct MGargs labelArgs = mgArgs(mgFontSize(LABEL_SIZE), mgSpacing(LABEL_SPACING));
-	mgDivBegin(MG_ROW, divArgs);
+	mgBoxBegin(MG_ROW, boxArgs);
 		mgText("R", labelArgs); mgNumber(r, mgArgs(mgGrow(1)));
 		mgText("G", labelArgs); mgNumber(g, mgArgs(mgGrow(1)));
 		mgText("G", labelArgs); mgNumber(b, mgArgs(mgGrow(1)));
 		mgText("A", labelArgs); mgNumber(a, mgArgs(mgGrow(1)));
-	return mgDivEnd();
+	return mgBoxEnd();
 }
 
 int mgCheckBox(const char* text, int* value, struct MGargs args)
 {
-	struct MGargs divArgs = mgMergeArgs(mgArgs(mgAlign(MG_CENTER), mgSpacing(SPACING), mgPaddingY(BUTTON_PADY)), args);
-	mgDivBegin(MG_ROW, divArgs);
+	struct MGargs boxArgs = mgMergeArgs(mgArgs(mgAlign(MG_CENTER), mgSpacing(SPACING), mgPaddingY(BUTTON_PADY)), args);
+	mgBoxBegin(MG_ROW, boxArgs);
 		mgText(text, mgArgs(mgFontSize(LABEL_SIZE), mgGrow(1)));
 		mgIcon(CHECKBOX_SIZE, CHECKBOX_SIZE, mgArgs(0));
-	return mgDivEnd();
+	return mgBoxEnd();
 }
 
 int mgButton(const char* text, struct MGargs args)
 {
-	struct MGargs divArgs = mgMergeArgs(mgArgs(mgAlign(MG_CENTER), mgSpacing(SPACING), mgPadding(BUTTON_PADX, BUTTON_PADY)), args);
-	mgDivBegin(MG_ROW, divArgs);
+	struct MGargs boxArgs = mgMergeArgs(mgArgs(mgAlign(MG_CENTER), mgSpacing(SPACING), mgPadding(BUTTON_PADX, BUTTON_PADY)), args);
+	mgBoxBegin(MG_ROW, boxArgs);
 		mgText(text, mgArgs(mgTextAlign(MG_CENTER), mgGrow(1)));
-	return mgDivEnd();
+	return mgBoxEnd();
 }
 
 int mgItem(const char* text, struct MGargs args)
 {
-	struct MGargs divArgs = mgMergeArgs(mgArgs(mgAlign(MG_CENTER), mgPadding(BUTTON_PADX, BUTTON_PADY)), args);
-	mgDivBegin(MG_ROW, divArgs);
+	struct MGargs boxArgs = mgMergeArgs(mgArgs(mgAlign(MG_CENTER), mgPadding(BUTTON_PADX, BUTTON_PADY)), args);
+	mgBoxBegin(MG_ROW, boxArgs);
 		mgText(text, mgArgs(mgTextAlign(MG_START), mgGrow(1)));
-	return mgDivEnd();
+	return mgBoxEnd();
 }
 
 int mgLabel(const char* text, struct MGargs args)
@@ -954,11 +919,11 @@ int mgLabel(const char* text, struct MGargs args)
 
 int mgSelect(int* value, const char** choices, int nchoises, struct MGargs args)
 {
-	struct MGargs divArgs = mgMergeArgs(mgArgs(mgAlign(MG_CENTER), mgSpacing(SPACING), mgPadding(BUTTON_PADX, BUTTON_PADY)), args);
-	mgDivBegin(MG_ROW, divArgs);
+	struct MGargs boxArgs = mgMergeArgs(mgArgs(mgAlign(MG_CENTER), mgSpacing(SPACING), mgPadding(BUTTON_PADX, BUTTON_PADY)), args);
+	mgBoxBegin(MG_ROW, boxArgs);
 		mgText(choices[*value], mgArgs(mgFontSize(TEXT_SIZE), mgTextAlign(MG_START), mgGrow(1)));
 		mgIcon(CHECKBOX_SIZE, CHECKBOX_SIZE, mgArgs(0));
-	return mgDivEnd();
+	return mgBoxEnd();
 }
 
 

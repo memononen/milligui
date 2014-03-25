@@ -67,6 +67,8 @@ int main()
 	char name[64] = "Mikko";
 	const char* choices[] = { "Normal", "Minimum Color", "Screen Door", "Maximum Velocity" };
 
+	printf("start\n");
+
 	if (!glfwInit()) {
 		printf("Failed to init GLFW.");
 		return -1;
@@ -146,7 +148,7 @@ int main()
 
 		nvgBeginFrame(vg, winWidth, winHeight, pxRatio, NVG_STRAIGHT_ALPHA);
 
-		mgBeginFrame(vg, winWidth, winHeight, mx, my, mbut);
+		mgFrameBegin(vg, winWidth, winHeight, mx, my, mbut);
 		mbut = 0;
 
 		// Menu bar
@@ -182,23 +184,23 @@ int main()
 		mgCheckBox("Cull Enabled", &cull, mgArgs(0));
 		mgLabel("Name", mgArgs(0));
 
-		mgTextBox(name, 64, mgArgs(0));
+		mgInput(name, 64, mgArgs(0));
 		if (mgButton("Build", mgArgs(0))) {
 			printf("Build!!");
 		}
 
-		mgDivBegin(MG_ROW, mgArgs(0));
-			mgDivBegin(MG_COL, mgArgs(mgGrow(1), mgAlign(MG_JUSTIFY)));
+		mgBoxBegin(MG_ROW, mgArgs(0));
+			mgBoxBegin(MG_COL, mgArgs(mgGrow(1), mgAlign(MG_JUSTIFY)));
 				mgButton("Build1", mgArgs(0));
 				mgButton("Build2", mgArgs(0));
 				mgButton("Build3", mgArgs(0));
-			mgDivEnd();
+			mgBoxEnd();
 			mgButton("Build4", mgArgs(0));
-		mgDivEnd();
+		mgBoxEnd();
 
 		mgPanelEnd();
 
-		mgEndFrame();
+		mgFrameEnd();
 
 /*		nvgBeginPath(vg);
 		nvgRoundedRect(vg, 20, 20, 200, 30, 5);

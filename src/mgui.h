@@ -73,26 +73,63 @@ struct MGargs {
 	unsigned char textAlign;
 };
 
+enum MGwidgetType {
+	MG_BOX,
+	MG_TEXT,
+	MG_ICON,
+	MG_SLIDER,
+	MG_INPUT,
+};
+
+struct MGwidget {
+	unsigned int id;
+	float x, y, width, height;
+	struct MGargs args;
+	unsigned char dir;
+	unsigned char type;
+
+	union {
+		struct {
+			char* text;
+		} text;
+		struct {
+			char* text;
+			int maxtext;
+			float value;
+		} input;
+		struct {
+			float value;
+			float vmin;
+			float vmax;
+		} slider;
+		struct {
+			struct MGwidget* children;
+		} box;
+	};
+	struct MGwidget* next;
+};
+
+
 // TODO: support zero args.
 #define mgArgs(...) mgArgs_(__VA_ARGS__, MG_NONE)
 struct MGargs mgArgs_(unsigned int first, ...);
 
-void mgBeginFrame(struct NVGcontext* vg, int width, int height, int mx, int my, int mbut);
-void mgEndFrame();
+void mgFrameBegin(struct NVGcontext* vg, int width, int height, int mx, int my, int mbut);
+void mgFrameEnd();
 
 int mgPanelBegin(int dir, float x, float y, float width, float height, struct MGargs args);
 int mgPanelEnd();
 
-int mgDivBegin(int dir, struct MGargs args);
-int mgDivEnd();
+int mgBoxBegin(int dir, struct MGargs args);
+int mgBoxEnd();
 
 int mgText(const char* text, struct MGargs args);
 int mgIcon(int width, int height, struct MGargs args);
 int mgSlider(float* value, float vmin, float vmax, struct MGargs args);
-int mgNumber(float* value, struct MGargs args);
-int mgTextBox(char* text, int maxtext, struct MGargs args);
+int mgInput(char* text, int maxtext, struct MGargs args);
 
 // Derivative
+int mgNumber(float* value, struct MGargs args);
 int mgSelect(int* value, const char** choices, int nchoises, struct MGargs args);
 int mgLabel(const char* text, struct MGargs args);
 int mgNumber3(float* x, float* y, float* z, const char* units, struct MGargs args);
