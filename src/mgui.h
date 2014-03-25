@@ -11,10 +11,6 @@ enum MUImouseButton {
 	MG_MOUSE_RELEASED	= 1 << 1,
 };
 
-enum MUIvalue {
-	MG_AUTO = -1,
-};
-
 enum MUIoverflow {
 	MG_FIT,
 	MG_HIDDEN,
@@ -33,66 +29,77 @@ enum MUIalign {
 	MG_JUSTIFY,
 };
 
-#define MG_AUTO_SIZE -1
+#define MG_AUTO_SIZE 0xffff
 
 
-enum MGargs {
+enum MGargTypes {
 	MG_NONE = 0,
-	MG_OVERFLOW_BASE,
-	MG_ALIGN_BASE,
-	MG_GROW_BASE,
-	MG_WIDTH_BASE,
-	MG_HEIGHT_BASE,
-	MG_PADDING_BASE,
-	MG_SPACING_BASE,
-	MG_FONTSIZE_BASE,
-	MG_TEXTALIGN_BASE,
+	MG_WIDTH_ARG,
+	MG_HEIGHT_ARG,
+	MG_SPACING_ARG,
+	MG_PADDINGX_ARG,
+	MG_PADDINGY_ARG,
+	MG_GROW_ARG,
+	MG_ALIGN_ARG,
+	MG_OVERFLOW_ARG,
+	MG_FONTSIZE_ARG,
+	MG_TEXTALIGN_ARG,
 };
 
-#define mgOverflow(a) (int)((MG_OVERFLOW_BASE | ((int)(a)<<8)))
-#define mgAlign(a) (int)((MG_ALIGN_BASE | ((int)(a)<<8)))
-#define mgGrow(a) (int)((MG_GROW_BASE | ((int)(a)<<8)))
-#define mgWidth(a) (int)((MG_WIDTH_BASE | ((int)(a)<<8)))
-#define mgHeight(a) (int)((MG_HEIGHT_BASE | ((int)(a)<<8)))
-#define mgPadding(a,b) (int)((MG_PADDING_BASE | ((int)(a)<<16) | ((int)(b)<<8)))
-#define mgSpacing(a) (int)((MG_SPACING_BASE | ((int)(a)<<8)))
-#define mgFontSize(a) (int)((MG_FONTSIZE_BASE | ((int)(a)<<8)))
-#define mgTextAlign(a) (int)((MG_TEXTALIGN_BASE | ((int)(a)<<8)))
+unsigned int mgPackArg(unsigned char arg, int x);
+#define mgOverflow(v)	(mgPackArg(MG_OVERFLOW_ARG, (v)))
+#define mgAlign(v)		(mgPackArg(MG_ALIGN_ARG, (v)))
+#define mgGrow(v)		(mgPackArg(MG_GROW_ARG, (v)))
+#define mgWidth(v)		(mgPackArg(MG_WIDTH_ARG, (v)))
+#define mgHeight(v)		(mgPackArg(MG_HEIGHT_ARG, (v)))
+#define mgPaddingX(v)	(mgPackArg(MG_PADDINGX_ARG, (v)))
+#define mgPaddingY(v)	(mgPackArg(MG_PADDINGY_ARG, (v)))
+#define mgPadding(x,y)	(mgPackArg(MG_PADDINGX_ARG, (x))), (mgPackArg(MG_PADDINGY_ARG, (y)))
+#define mgSpacing(v)	(mgPackArg(MG_SPACING_ARG, (v)))
+#define mgFontSize(v)	(mgPackArg(MG_FONTSIZE_ARG, (v)))
+#define mgTextAlign(v)	(mgPackArg(MG_TEXTALIGN_ARG, (v)))
+
+struct MGargs {
+	unsigned int set;
+	unsigned short width;
+	unsigned short height;
+	unsigned char spacing;
+	unsigned char paddingx;
+	unsigned char paddingy;
+	unsigned char grow;
+	unsigned char align;
+	unsigned char overflow;
+	unsigned char fontSize;
+	unsigned char textAlign;
+};
+
+// TODO: support zero args.
+#define mgArgs(...) mgArgs_(__VA_ARGS__, MG_NONE)
+struct MGargs mgArgs_(unsigned int first, ...);
 
 void mgBeginFrame(struct NVGcontext* vg, int width, int height, int mx, int my, int mbut);
 void mgEndFrame();
 
-#define mgPanelBegin(...) mgPanelBegin_(__VA_ARGS__, MG_NONE)
-int mgPanelBegin_(int dir, float x, float y, float width, float height, ...);
+int mgPanelBegin(int dir, float x, float y, float width, float height, struct MGargs args);
 int mgPanelEnd();
 
-#define mgDivBegin(...) mgDivBegin_(__VA_ARGS__, MG_NONE)
-int mgDivBegin_(int dir, ...);
+int mgDivBegin(int dir, struct MGargs args);
 int mgDivEnd();
 
-#define mgText(...) mgText_(__VA_ARGS__, MG_NONE)
-int mgText_(const char* text, ...);
-
-#define mgIcon(...) mgIcon_(__VA_ARGS__, MG_NONE)
-int mgIcon_(int width, int height, ...);
-
-#define mgSlider(...) mgSlider_(__VA_ARGS__, MG_NONE)
-int mgSlider_(float* value, float vmin, float vmax, ...);
-
-#define mgNumber(...) mgNumber_(__VA_ARGS__, MG_NONE)
-int mgNumber_(float* value, ...);
-
-#define mgTextBox(...) mgTextBox_(__VA_ARGS__, MG_NONE)
-int mgTextBox_(char* text, int maxtext, ...);
+int mgText(const char* text, struct MGargs args);
+int mgIcon(int width, int height, struct MGargs args);
+int mgSlider(float* value, float vmin, float vmax, struct MGargs args);
+int mgNumber(float* value, struct MGargs args);
+int mgTextBox(char* text, int maxtext, struct MGargs args);
 
 // Derivative
-int mgSelect(int* value, const char** choices, int nchoises);
-int mgLabel(const char* text);
-int mgNumber3(float* x, float* y, float* z, const char* units);
-int mgColor(float* r, float* g, float* b, float* a);
-int mgCheckBox(const char* text, int* value);
-int mgButton(const char* text);
-int mgItem(const char* text);
+int mgSelect(int* value, const char** choices, int nchoises, struct MGargs args);
+int mgLabel(const char* text, struct MGargs args);
+int mgNumber3(float* x, float* y, float* z, const char* units, struct MGargs args);
+int mgColor(float* r, float* g, float* b, float* a, struct MGargs args);
+int mgCheckBox(const char* text, int* value, struct MGargs args);
+int mgButton(const char* text, struct MGargs args);
+int mgItem(const char* text, struct MGargs args);
 
 
 #endif // MGUI_H

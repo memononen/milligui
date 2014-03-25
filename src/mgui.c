@@ -12,7 +12,7 @@ static float minf(float a, float b) { return a < b ? a : b; }
 static float maxf(float a, float b) { return a > b ? a : b; }
 
 
-enum MUIwidgetType {
+enum MGwidgetType {
 	MG_PANEL,
 	MG_TEXT,
 	MG_ICON,
@@ -51,7 +51,7 @@ static char* allocTextLen(const char* text, int len)
 
 #define WIDGET_POOL_SIZE 1000
 
-struct MUIwidget {
+struct MGwidget {
 	int type;
 	unsigned int id;
 	
@@ -85,12 +85,12 @@ struct MUIwidget {
 		struct {
 			unsigned int panelId;
 			unsigned int widgetId;
-			struct MUIwidget* children;
+			struct MGwidget* children;
 		} panel;
 	};
-	struct MUIwidget* next;
+	struct MGwidget* next;
 };
-struct MUIwidget widgetPool[WIDGET_POOL_SIZE];
+struct MGwidget widgetPool[WIDGET_POOL_SIZE];
 static int widgetPoolSize = 0;
 
 #define MG_PANEL_STACK_SIZE 100
@@ -110,37 +110,37 @@ struct MUIstate
 	int widgetX, widgetY, widgetW, widgetH;
 	unsigned int panelId;
 	unsigned int widgetId;
-	struct MUIwidget* stack[MG_PANEL_STACK_SIZE];
+	struct MGwidget* stack[MG_PANEL_STACK_SIZE];
 	int nstack;
 	struct NVGcontext* vg;
 
 	int width, height;
 
-	struct MUIwidget* panels[MG_MAX_PANELS];
+	struct MGwidget* panels[MG_MAX_PANELS];
 	int npanels;
 };
 
 static struct MUIstate state;
 
-static struct MUIwidget* getParent()
+static struct MGwidget* getParent()
 {
 	if (state.nstack == 0) return NULL;
 	return state.stack[state.nstack-1];
 }
 
-static unsigned int getPanelId(struct MUIwidget* w)
+static unsigned int getPanelId(struct MGwidget* w)
 {
 	return w == NULL ? 0 : w->panel.panelId;
 }
 
-static unsigned int getWidgetId(struct MUIwidget* w)
+static unsigned int getWidgetId(struct MGwidget* w)
 {
 	return w == NULL ? ++state.widgetId : ++(w->panel.widgetId);
 }
 
-static void addChildren(struct MUIwidget* parent, struct MUIwidget* w)
+static void addChildren(struct MGwidget* parent, struct MGwidget* w)
 {
-	struct MUIwidget** prev = NULL;
+	struct MGwidget** prev = NULL;
 	if (parent == NULL) return;
 	prev = &parent->panel.children;
 	while (*prev != NULL)
@@ -148,10 +148,10 @@ static void addChildren(struct MUIwidget* parent, struct MUIwidget* w)
 	*prev = w;
 }
 
-static struct MUIwidget* allocWidget(int type)
+static struct MGwidget* allocWidget(int type)
 {
-	struct MUIwidget* parent = getParent();
-	struct MUIwidget* w = NULL;
+	struct MGwidget* parent = getParent();
+	struct MGwidget* w = NULL;
 	if (widgetPoolSize+1 > WIDGET_POOL_SIZE)
 		return NULL;
 	w = &widgetPool[widgetPoolSize++];
@@ -283,31 +283,6 @@ void mgBeginFrame(struct NVGcontext* vg, int width, int height, int mx, int my, 
 	widgetPoolSize = 0;
 }
 
-static const char* getChoice(const char* str, int n, int* nstr)
-{
-	const char* start = str;
-	const char* end = str;
-	if (str == NULL) {
-		*nstr = 0;
-		return NULL;
-	}
-	while (*end) {
-		if (*end == '|') {
-			n--;
-			if (n == 0) {
-				*nstr = (int)(end - start);
-				return start;
-			}
-			end++;
-			start = end;
-		} else {
-			end++;
-		}
-	}
-	*nstr = (int)(end - start);
-	return start;
-}
-
 #define LABEL_SIZE 14
 #define TEXT_SIZE 18
 #define BUTTON_PADX 10
@@ -348,14 +323,11 @@ static int visible(const float* bounds, float x, float y, float w, float h)
 	return (maxx - minx) >= 0.0f && (maxy - miny) >= 0.0f;
 }
 
-static void drawPanel(struct MUIwidget* panel, const float* bounds)
+static void drawPanel(struct MGwidget* panel, const float* bounds)
 {
-	int i, j;
-	float lw,lh, tw,th, x;
-	const char* ch = NULL;
-	int nch = 0;
+	float tw, x;
 	char str[32];
-	struct MUIwidget* w;
+	struct MGwidget* w;
 	float pbounds[4];
 	float wbounds[4];
 
@@ -560,9 +532,9 @@ static void textSize(const char* str, float size, float* w, float* h)
 	if (h) *h = th;
 }
 
-static void fitToContent(struct MUIwidget* root)
+static void fitToContent(struct MGwidget* root)
 {
-	struct MUIwidget* w = NULL;
+	struct MGwidget* w = NULL;
 
 	root->cwidth = 0;
 	root->cheight = 0;
@@ -585,16 +557,16 @@ static void fitToContent(struct MUIwidget* root)
 	root->cheight += root->paddingy*2;
 }
 
-static void layoutWidgets(struct MUIwidget* root)
+static void layoutWidgets(struct MGwidget* root)
 {
-	struct MUIwidget* w = NULL;
+	struct MGwidget* w = NULL;
 	float x, y, rw, rh;
 	float sum = 0, avail = 0;
 	int ngrow = 0, nitems = 0;
 
-	if (root->width == MG_AUTO)
+	if (root->width == MG_AUTO_SIZE)
 		root->width = root->cwidth;
-	if (root->height == MG_AUTO)
+	if (root->height == MG_AUTO_SIZE)
 		root->height = root->cheight;
 
 	x = root->x + root->paddingx;
@@ -702,42 +674,88 @@ static void layoutWidgets(struct MUIwidget* root)
 	}
 }
 
-static void parseArgs(struct MUIwidget* w, va_list list)
+unsigned int mgPackArg(unsigned char arg, int x)
 {
-	int v;
-	for (v = va_arg(list, int); v != MG_NONE; v = va_arg(list, int)) {
-		switch(v & 0xff) {
-		case MG_OVERFLOW_BASE:		w->overflow = (v >> 8); break;
-		case MG_ALIGN_BASE:		w->align = (v >> 8); break;
-		case MG_GROW_BASE:			w->grow = (v >> 8); break;
-		case MG_WIDTH_BASE:		w->width = (v >> 8); break;
-		case MG_HEIGHT_BASE:		w->height = (v >> 8); break;
-		case MG_PADDING_BASE:		w->paddingx = (v >> 16) & 0xff; w->paddingy = (v >> 8) & 0xff; break;
-		case MG_SPACING_BASE:		w->spacing = (v >> 8); break;
-		case MG_FONTSIZE_BASE:		w->fontSize = (v >> 8); break;
-		case MG_TEXTALIGN_BASE:	w->textAlign = (v >> 8); break;
-		}
-	}
+	return (unsigned int)arg | ((unsigned int)(x & 0x00ffffff) << 8);
 }
 
-int mgPanelBegin_(int dir, float x, float y, float width, float height, ...)
+struct MGargs mgArgs_(unsigned int first, ...)
 {
 	va_list list;
-	struct MUIwidget* w = allocWidget(MG_PANEL);
+	struct MGargs args;
+	int v = MG_NONE;
+
+	memset(&args, 0, sizeof(first));
+
+	va_start(list, first);
+	for (v = first; v != MG_NONE; v = va_arg(list, unsigned int)) {
+		switch(v & 0xff) {
+			case MG_OVERFLOW_ARG:		args.overflow = v >> 8; break;
+			case MG_ALIGN_ARG:			args.align = v >> 8; break;
+			case MG_GROW_ARG:			args.grow = v >> 8; break;
+			case MG_WIDTH_ARG:			args.width = v >> 8; break;
+			case MG_HEIGHT_ARG:			args.height = v >> 8; break;
+			case MG_PADDINGX_ARG:		args.paddingx = v >> 8; break;
+			case MG_PADDINGY_ARG:		args.paddingy = v >> 8; break;
+			case MG_SPACING_ARG:		args.spacing = v >> 8; break;
+			case MG_FONTSIZE_ARG:		args.fontSize = v >> 8; break;
+			case MG_TEXTALIGN_ARG:		args.textAlign = v >> 8; break;
+		}
+		// Mark which properties has been set.
+		args.set |= 1 << (v & 0xff);
+	}
+	va_end(list);
+
+	return args;
+}
+
+static int isArgSet(struct MGargs* args, unsigned int f)
+{
+	return args->set & (1 << f);
+}
+
+struct MGargs mgMergeArgs(struct MGargs dst, struct MGargs src)
+{
+	if (isArgSet(&src, MG_WIDTH_ARG))		dst.width = src.width;
+	if (isArgSet(&src, MG_HEIGHT_ARG))		dst.height = src.height;
+	if (isArgSet(&src, MG_SPACING_ARG))		dst.spacing = src.spacing;
+	if (isArgSet(&src, MG_PADDINGX_ARG))	dst.paddingx = src.paddingx;
+	if (isArgSet(&src, MG_PADDINGY_ARG))	dst.paddingy = src.paddingy;
+	if (isArgSet(&src, MG_GROW_ARG))		dst.grow = src.grow;
+	if (isArgSet(&src, MG_ALIGN_ARG))		dst.align = src.align;
+	if (isArgSet(&src, MG_OVERFLOW_ARG))	dst.overflow = src.overflow;
+	if (isArgSet(&src, MG_FONTSIZE_ARG))	dst.fontSize = src.fontSize;
+	if (isArgSet(&src, MG_TEXTALIGN_ARG))	dst.textAlign = src.textAlign;
+	return dst;
+}
+
+static void applyArgs(struct MGwidget* w, struct MGargs* args)
+{
+	if (isArgSet(args, MG_WIDTH_ARG))		w->width = args->width;
+	if (isArgSet(args, MG_HEIGHT_ARG))	w->height = args->height;
+	if (isArgSet(args, MG_SPACING_ARG))	w->spacing = args->spacing;
+	if (isArgSet(args, MG_PADDINGX_ARG))	w->paddingx = args->paddingx;
+	if (isArgSet(args, MG_PADDINGY_ARG))	w->paddingy = args->paddingy;
+	if (isArgSet(args, MG_GROW_ARG))		w->grow = args->grow;
+	if (isArgSet(args, MG_ALIGN_ARG))		w->align = args->align;
+	if (isArgSet(args, MG_OVERFLOW_ARG))	w->overflow = args->overflow;
+	if (isArgSet(args, MG_FONTSIZE_ARG))	w->fontSize = args->fontSize;
+	if (isArgSet(args, MG_TEXTALIGN_ARG))	w->textAlign = args->textAlign;
+}
+
+int mgPanelBegin(int dir, float x, float y, float width, float height, struct MGargs args)
+{
+	struct MGwidget* w = allocWidget(MG_PANEL);
 
 	w->x = x;
 	w->y = y;
 	w->width = width;
 	w->height = height;
+	w->dir = dir;
+	applyArgs(w, &args);
 
 	state.panelId++;
 	w->panel.panelId = state.panelId;
-
-	w->dir = dir;
-
-	va_start(list, height);
-	parseArgs(w, list);
-	va_end(list);
 
 	if (state.nstack < MG_PANEL_STACK_SIZE)
 		state.stack[state.nstack++] = w;
@@ -750,32 +768,27 @@ int mgPanelBegin_(int dir, float x, float y, float width, float height, ...)
 
 int mgPanelEnd()
 {
-	struct MUIwidget* panel = NULL;
+	struct MGwidget* panel = NULL;
 	if (state.nstack > 0) {
 		state.nstack--;
 		panel = state.stack[state.nstack];
 		fitToContent(panel);
 		layoutWidgets(panel);
 	}
-
 	return 0;
 }
 
-int mgDivBegin_(int dir, ...)
+int mgDivBegin(int dir, struct MGargs args)
 {
-	va_list list;
-	struct MUIwidget* w = allocWidget(MG_PANEL);
+	struct MGwidget* w = allocWidget(MG_PANEL);
+
+	w->width = MG_AUTO_SIZE;
+	w->height = MG_AUTO_SIZE;
+	w->dir = dir;
+	applyArgs(w, &args);
 
 	state.panelId++;
 	w->panel.panelId = state.panelId;
-
-	w->width = MG_AUTO;
-	w->height = MG_AUTO;
-	w->dir = dir;
-
-	va_start(list, dir);
-	parseArgs(w, list);
-	va_end(list);
 
 	if (state.nstack < MG_PANEL_STACK_SIZE)
 		state.stack[state.nstack++] = w;
@@ -785,33 +798,26 @@ int mgDivBegin_(int dir, ...)
 
 int mgDivEnd()
 {
-	int i;
-	struct MUIwidget* div = NULL;
-
+	struct MGwidget* div = NULL;
 	if (state.nstack > 0) {
 		state.nstack--;
 		div = state.stack[state.nstack];
 		fitToContent(div);
 	}
-
 	return 0;
 }
 
-int mgText_(const char* text, ...)
+int mgText(const char* text, struct MGargs args)
 {
-	va_list list;
 	float tw, th;
-	struct MUIwidget* w = allocWidget(MG_TEXT);
+	struct MGwidget* w = allocWidget(MG_TEXT);
 
 	w->text.text = allocText(text);
 
 	w->spacing = SPACING;
 	w->fontSize = TEXT_SIZE;
 	w->textAlign = MG_START;
-
-	va_start(list, text);
-	parseArgs(w, list);
-	va_end(list);
+	applyArgs(w, &args);
 
 	textSize(w->text.text, w->fontSize, &tw, &th);
 	w->cwidth = tw;
@@ -820,27 +826,22 @@ int mgText_(const char* text, ...)
 	return 0;
 }
 
-int mgIcon_(int width, int height, ...)
+int mgIcon(int width, int height, struct MGargs args)
 {
-	va_list list;
-	struct MUIwidget* w = allocWidget(MG_ICON);
+	struct MGwidget* w = allocWidget(MG_ICON);
 
 	w->cwidth = width;
 	w->cheight = height;
 	w->spacing = SPACING;
-
-	va_start(list, height);
-	parseArgs(w, list);
-	va_end(list);
+	applyArgs(w, &args);
 
 	return 0;
 }
 
-int mgSlider_(float* value, float vmin, float vmax, ...)
+int mgSlider(float* value, float vmin, float vmax, struct MGargs args)
 {
-	va_list list;
 	float tw, th;
-	struct MUIwidget* w = allocWidget(MG_SLIDER);
+	struct MGwidget* w = allocWidget(MG_SLIDER);
 
 	w->slider.value = *value;
 	w->slider.vmin = vmin;
@@ -848,10 +849,7 @@ int mgSlider_(float* value, float vmin, float vmax, ...)
 
 	w->spacing = SPACING;
 	w->fontSize = TEXT_SIZE;
-
-	va_start(list, vmax);
-	parseArgs(w, list);
-	va_end(list);
+	applyArgs(w, &args);
 
 	textSize(NULL, w->fontSize, &tw,&th);
 	w->cwidth = DEFAUL_SLIDERW;
@@ -860,21 +858,17 @@ int mgSlider_(float* value, float vmin, float vmax, ...)
 	return 0;
 }
 
-int mgNumber_(float* value, ...)
+int mgNumber(float* value, struct MGargs args)
 {
-	va_list list;
 	float tw, th;
-	struct MUIwidget* w = allocWidget(MG_NUMBERBOX);
+	struct MGwidget* w = allocWidget(MG_NUMBERBOX);
 
 	w->number.value = *value;
 
 	w->spacing = SPACING;
 	w->fontSize = TEXT_SIZE;
 	w->textAlign = MG_END;
-
-	va_start(list, value);
-	parseArgs(w, list);
-	va_end(list);
+	applyArgs(w, &args);
 
 	textSize(NULL, w->fontSize, &tw,&th);
 	w->cwidth = DEFAUL_NUMBERW;
@@ -883,11 +877,10 @@ int mgNumber_(float* value, ...)
 	return 0;
 }
 
-int mgTextBox_(char* text, int maxtext, ...)
+int mgTextBox(char* text, int maxtext, struct MGargs args)
 {
-	va_list list;
 	float tw, th;
-	struct MUIwidget* w = allocWidget(MG_TEXTBOX);
+	struct MGwidget* w = allocWidget(MG_TEXTBOX);
 
 	w->textbox.text = allocTextLen(text, maxtext);
 	w->textbox.maxtext = maxtext;
@@ -895,10 +888,7 @@ int mgTextBox_(char* text, int maxtext, ...)
 	w->spacing = SPACING;
 	w->fontSize = TEXT_SIZE;
 	w->textAlign = MG_START;
-
-	va_start(list, maxtext);
-	parseArgs(w, list);
-	va_end(list);
+	applyArgs(w, &args);
 
 	textSize(NULL, w->fontSize, &tw,&th);
 	w->cwidth = DEFAUL_TEXTW;
@@ -907,63 +897,67 @@ int mgTextBox_(char* text, int maxtext, ...)
 	return 0;
 }
 
-int mgNumber3(float* x, float* y, float* z, const char* units)
+int mgNumber3(float* x, float* y, float* z, const char* units, struct MGargs args)
 {
-	mgDivBegin(MG_ROW, mgAlign(MG_CENTER), mgSpacing(SPACING));
-		mgNumber(x, mgGrow(1));
-		mgNumber(y, mgGrow(1));
-		mgNumber(z, mgGrow(1));
+	struct MGargs divArgs = mgMergeArgs(mgArgs(mgAlign(MG_CENTER), mgSpacing(SPACING)), args);
+	mgDivBegin(MG_ROW, divArgs);
+		mgNumber(x, mgArgs(mgGrow(1)));
+		mgNumber(y, mgArgs(mgGrow(1)));
+		mgNumber(z, mgArgs(mgGrow(1)));
 		if (units != NULL && strlen(units) > 0)
-			mgText(units, mgFontSize(LABEL_SIZE), mgSpacing(LABEL_SPACING));
+			mgText(units, mgArgs(mgFontSize(LABEL_SIZE), mgSpacing(LABEL_SPACING)));
 	return mgDivEnd();
 }
 
-int mgColor(float* r, float* g, float* b, float* a)
+int mgColor(float* r, float* g, float* b, float* a, struct MGargs args)
 {
-	mgDivBegin(MG_ROW, mgAlign(MG_CENTER), mgSpacing(SPACING));
-		mgText("R", mgFontSize(LABEL_SIZE), mgSpacing(LABEL_SPACING));
-		mgNumber(r, mgGrow(1));
-		mgText("G", mgFontSize(LABEL_SIZE), mgSpacing(LABEL_SPACING));
-		mgNumber(g, mgGrow(1));
-		mgText("G", mgFontSize(LABEL_SIZE), mgSpacing(LABEL_SPACING));
-		mgNumber(b, mgGrow(1));
-		mgText("A", mgFontSize(LABEL_SIZE), mgSpacing(LABEL_SPACING));
-		mgNumber(a, mgGrow(1));
+	struct MGargs divArgs = mgMergeArgs(mgArgs(mgAlign(MG_CENTER), mgSpacing(SPACING)), args);
+	struct MGargs labelArgs = mgArgs(mgFontSize(LABEL_SIZE), mgSpacing(LABEL_SPACING));
+	mgDivBegin(MG_ROW, divArgs);
+		mgText("R", labelArgs); mgNumber(r, mgArgs(mgGrow(1)));
+		mgText("G", labelArgs); mgNumber(g, mgArgs(mgGrow(1)));
+		mgText("G", labelArgs); mgNumber(b, mgArgs(mgGrow(1)));
+		mgText("A", labelArgs); mgNumber(a, mgArgs(mgGrow(1)));
 	return mgDivEnd();
 }
 
-int mgCheckBox(const char* text, int* value)
+int mgCheckBox(const char* text, int* value, struct MGargs args)
 {
-	mgDivBegin(MG_ROW, mgAlign(MG_CENTER), mgPadding(0,BUTTON_PADY));
-		mgText(text, mgFontSize(LABEL_SIZE), mgGrow(1));
-		mgIcon(CHECKBOX_SIZE, CHECKBOX_SIZE);
+	struct MGargs divArgs = mgMergeArgs(mgArgs(mgAlign(MG_CENTER), mgSpacing(SPACING), mgPaddingY(BUTTON_PADY)), args);
+	mgDivBegin(MG_ROW, divArgs);
+		mgText(text, mgArgs(mgFontSize(LABEL_SIZE), mgGrow(1)));
+		mgIcon(CHECKBOX_SIZE, CHECKBOX_SIZE, mgArgs(0));
 	return mgDivEnd();
 }
 
-int mgButton(const char* text)
+int mgButton(const char* text, struct MGargs args)
 {
-	mgDivBegin(MG_ROW, mgAlign(MG_CENTER), mgPadding(BUTTON_PADX,BUTTON_PADY), mgSpacing(SPACING));
-		mgText(text, mgAlign(MG_CENTER), mgGrow(1));
+	struct MGargs divArgs = mgMergeArgs(mgArgs(mgAlign(MG_CENTER), mgSpacing(SPACING), mgPadding(BUTTON_PADX, BUTTON_PADY)), args);
+	mgDivBegin(MG_ROW, divArgs);
+		mgText(text, mgArgs(mgTextAlign(MG_CENTER), mgGrow(1)));
 	return mgDivEnd();
 }
 
-int mgItem(const char* text)
+int mgItem(const char* text, struct MGargs args)
 {
-	mgDivBegin(MG_ROW, mgAlign(MG_CENTER), mgPadding(BUTTON_PADX,BUTTON_PADY));
-		mgText(text, mgAlign(MG_START), mgGrow(1));
+	struct MGargs divArgs = mgMergeArgs(mgArgs(mgAlign(MG_CENTER), mgPadding(BUTTON_PADX, BUTTON_PADY)), args);
+	mgDivBegin(MG_ROW, divArgs);
+		mgText(text, mgArgs(mgTextAlign(MG_START), mgGrow(1)));
 	return mgDivEnd();
 }
 
-int mgLabel(const char* text)
+int mgLabel(const char* text, struct MGargs args)
 {
-	return mgText(text, mgFontSize(LABEL_SIZE), mgSpacing(LABEL_SPACING), mgAlign(MG_START));
+	struct MGargs textArgs = mgMergeArgs(mgArgs(mgFontSize(LABEL_SIZE), mgSpacing(LABEL_SPACING), mgTextAlign(MG_START)), args);
+	return mgText(text, textArgs);
 }
 
-int mgSelect(int* value, const char** choices, int nchoises)
+int mgSelect(int* value, const char** choices, int nchoises, struct MGargs args)
 {
-	mgDivBegin(MG_ROW, mgAlign(MG_CENTER), mgPadding(BUTTON_PADX,BUTTON_PADY), mgSpacing(SPACING));
-		mgText(choices[*value], mgFontSize(TEXT_SIZE), mgAlign(MG_START), mgGrow(1));
-		mgIcon(CHECKBOX_SIZE,CHECKBOX_SIZE);
+	struct MGargs divArgs = mgMergeArgs(mgArgs(mgAlign(MG_CENTER), mgSpacing(SPACING), mgPadding(BUTTON_PADX, BUTTON_PADY)), args);
+	mgDivBegin(MG_ROW, divArgs);
+		mgText(choices[*value], mgArgs(mgFontSize(TEXT_SIZE), mgTextAlign(MG_START), mgGrow(1)));
+		mgIcon(CHECKBOX_SIZE, CHECKBOX_SIZE, mgArgs(0));
 	return mgDivEnd();
 }
 

@@ -151,61 +151,50 @@ int main()
 
 		// Menu bar
 //		mgBeginPanel("Menu", 0,0, winWidth, 30, MG_ROW, MG_JUSTIFY, 0, 0,0);
-		mgPanelBegin(MG_ROW, 0,0, winWidth, 30, mgAlign(MG_JUSTIFY));
-			mgItem("File");
-			mgItem("Edit");
-			mgItem("Tools");
-			mgItem("View");
+		mgPanelBegin(MG_ROW, 0,0, winWidth, 30, mgArgs(mgAlign(MG_JUSTIFY)));
+			mgItem("File", mgArgs(0));
+			mgItem("Edit", mgArgs(0));
+			mgItem("Tools", mgArgs(0));
+			mgItem("View", mgArgs(0));
 		mgPanelEnd();
-
-/*		mgf("panel w=%f h=30 dir=row align=justify", winWidth);
-			mgf("item File");
-			mgf("item Edit");
-			mgf("item Tools");
-			mgf("item View");
-		mgf("/panel");*/
 
 //		mgBeginPanel("NavMesh Options", 20,50, 250, MG_AUTO, MG_COL, MG_JUSTIFY, 0, 5);
 //		mgBeginPanel("NavMesh Options", 20,50, 250, winHeight - 50, MG_COL, MG_JUSTIFY, MG_SCROLL, 5,5);
-		mgPanelBegin(MG_COL, 20,50, 250, winHeight - 50, mgAlign(MG_JUSTIFY), mgOverflow(MG_SCROLL), mgPadding(5,5));
+		mgPanelBegin(MG_COL, 20,50, 250, winHeight - 50, mgArgs(mgAlign(MG_JUSTIFY), mgOverflow(MG_SCROLL), mgPadding(5,5)));
 
 //		mgText("NavMesh Options", );
 
-		mgLabel("Blending");
-		mgSelect(&blending, choices, 4);
-		mgLabel("Opacity");
-		mgSlider(&opacity, 0.0f, 1.0f);
-		mgLabel("Iterations");
-		mgNumber(&iterations);
-		mgLabel("Position");
-		mgNumber3(&position[0], &position[1], &position[3], "mm");
-		mgLabel("Color");
-		mgColor(&color[0], &color[1], &color[2], &color[3]);
-		mgCheckBox("Cull Enabled", &cull);
-		mgLabel("Name");
-		mgTextBox(name, 64);
-		if (mgButton("Build")) {
+		mgLabel("Blending", mgArgs(0));
+		mgSelect(&blending, choices, 4, mgArgs(0));
+
+		mgLabel("Opacity", mgArgs(0));
+		mgSlider(&opacity, 0.0f, 1.0f, mgArgs(0));
+
+		mgLabel("Iterations", mgArgs(0));
+		mgNumber(&iterations, mgArgs(0));
+
+		mgLabel("Position", mgArgs(0));
+		mgNumber3(&position[0], &position[1], &position[3], "mm", mgArgs(0));
+
+		mgLabel("Color", mgArgs(0));
+		mgColor(&color[0], &color[1], &color[2], &color[3], mgArgs(0));
+
+		mgCheckBox("Cull Enabled", &cull, mgArgs(0));
+		mgLabel("Name", mgArgs(0));
+
+		mgTextBox(name, 64, mgArgs(0));
+		if (mgButton("Build", mgArgs(0))) {
 			printf("Build!!");
 		}
 
-//		mgf("slider %f min=0 max=1 units=%%", &opacity);
-
-		mgDivBegin(MG_ROW);
-			mgDivBegin(MG_COL, mgGrow(1), mgAlign(MG_JUSTIFY));
-				mgButton("Build1");
-				mgButton("Build2");
-				mgButton("Build3");
+		mgDivBegin(MG_ROW, mgArgs(0));
+			mgDivBegin(MG_COL, mgArgs(mgGrow(1), mgAlign(MG_JUSTIFY)));
+				mgButton("Build1", mgArgs(0));
+				mgButton("Build2", mgArgs(0));
+				mgButton("Build3", mgArgs(0));
 			mgDivEnd();
-			mgButton("Build4");
+			mgButton("Build4", mgArgs(0));
 		mgDivEnd();
-
-/*		mgf("div dir=row align=start");
-			mgf("div grow=1 dir=col align=justify");
-				mgf("button Build1");
-				mgf("button Build2");
-				mgf("button Build3");
-			mgf("/div");
-		mgf("/div");*/
 
 		mgPanelEnd();
 
