@@ -338,6 +338,7 @@ static void updateLogic(const float* bounds)
 	int i;
 	struct MGwidget* hit = NULL;
 	struct MGwidget* active = NULL;
+	int deactivate = 0;
 
 //	for (i = 0; i < state.panelCount; i++)
 //		dumpId(state.panels[i], 0);
@@ -373,7 +374,7 @@ static void updateLogic(const float* bounds)
 			if (state.hover == state.active)
 				state.clicked = state.hover;
 			state.released = state.active;
-			state.active = 0;
+			deactivate = 1;
 		} else {
 			state.dragged = state.active;
 		}
@@ -384,6 +385,10 @@ static void updateLogic(const float* bounds)
 		if (child != NULL)
 			active = child;
 	}
+
+	// Post pone deactivation so that we get atleast one frame of active state if mouse press/release during one frame.
+	if (deactivate)
+		state.active = 0;
 
 	// Update mouse positions.
 	if (state.mbut & MG_MOUSE_PRESSED) {
@@ -418,6 +423,7 @@ static void updateLogic(const float* bounds)
 	state.result.deltamy = state.deltamy;
 	state.result.localmx = state.localmx;
 	state.result.localmy = state.localmy;
+
 	if (active != NULL) {
 		state.result.bounds[0] = active->x;
 		state.result.bounds[1] = active->y;
@@ -862,7 +868,7 @@ static struct MGhit* hitResult(struct MGwidget* w)
 	if (w == NULL) return NULL;
 	if (w->args.logic == MG_CLICK && state.clicked == w->id)
 		return &state.result;
-	if (w->args.logic == MG_DRAG && state.active == w->id)
+	if (w->args.logic == MG_DRAG && (state.pressed == w->id || state.dragged == w->id || state.released == w->id))
 		return &state.result;
 	return NULL;
 }
@@ -1002,7 +1008,8 @@ struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGargs args)
 				*value = clampf(vmin + v * (vmax - vmin), vmin, vmax);
 			}
 			state->value = *value;
-		} else if (res->dragged) {
+		}
+		if (res->dragged) {
 			float delta = (res->deltamx / xrange) * (vmax - vmin);
 			*value = clampf(state->value + delta, vmin, vmax);
 		}
