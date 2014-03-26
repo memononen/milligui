@@ -84,6 +84,8 @@ struct MGhit {
 	float mx, my;
 	float deltamx, deltamy;
 	float localmx, localmy;
+	float bounds[4];
+	unsigned char storage[128];
 };
 
 enum MGwidgetType {

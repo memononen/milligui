@@ -10,6 +10,7 @@ static int mini(int a, int b) { return a < b ? a : b; }
 static int maxi(int a, int b) { return a > b ? a : b; }
 static float minf(float a, float b) { return a < b ? a : b; }
 static float maxf(float a, float b) { return a > b ? a : b; }
+static float clampf(float a, float mn, float mx) { return a < mn ? mn : (a > mx ? mx : a); }
 
 #define LABEL_SIZE 14
 #define TEXT_SIZE 18
@@ -417,6 +418,14 @@ static void updateLogic(const float* bounds)
 	state.result.deltamy = state.deltamy;
 	state.result.localmx = state.localmx;
 	state.result.localmy = state.localmy;
+	if (active != NULL) {
+		state.result.bounds[0] = active->x;
+		state.result.bounds[1] = active->y;
+		state.result.bounds[2] = active->width;
+		state.result.bounds[3] = active->height;
+	} else {
+		state.result.bounds[0] = state.result.bounds[1] = state.result.bounds[2] = state.result.bounds[3] = 0;
+	}
 }
 
 
@@ -948,10 +957,16 @@ struct MGhit* mgIcon(int width, int height, struct MGargs args)
 	return hitResult(w);
 }
 
+
+struct MGsliderState {
+	float value;	
+};
+
 struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGargs args)
 {
 	float tw, th;
 	struct MGwidget* w = allocWidget(MG_SLIDER);
+	struct MGhit* res = NULL;
 
 	w->slider.value = *value;
 	w->slider.vmin = vmin;
@@ -972,7 +987,27 @@ struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGargs args)
 	w->args.width += w->args.paddingx*2;
 	w->args.height += w->args.paddingy*2;
 
-	return hitResult(w);
+	res = hitResult(w);
+	if (res != NULL) {
+		struct MGsliderState* state = (struct MGsliderState*)res->storage;
+		float xmin = res->bounds[0] + SLIDER_HANDLE/2;
+		float xmax = res->bounds[0]+res->bounds[2] - SLIDER_HANDLE/2;
+		float xrange = maxf(1.0f, xmax - xmin); 
+		if (res->pressed) {
+			float u = (*value - vmin) / (vmax - vmin);
+			float x = xmin + u * (xmax - xmin);
+			if (res->mx < (x-SLIDER_HANDLE/2) || res->mx > (x+SLIDER_HANDLE/2)) {
+				// If hit outside the handle, skip there directly.
+				float v = clampf((res->mx - xmin) / xrange, 0.0f, 1.0f);
+				*value = clampf(vmin + v * (vmax - vmin), vmin, vmax);
+			}
+			state->value = *value;
+		} else if (res->dragged) {
+			float delta = (res->deltamx / xrange) * (vmax - vmin);
+			*value = clampf(state->value + delta, vmin, vmax);
+		}
+	}
+	return res;
 }
 
 struct MGhit* mgInput(char* text, int maxtext, struct MGargs args)
