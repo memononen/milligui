@@ -44,6 +44,7 @@ enum MGargTypes {
 	MG_OVERFLOW_ARG,
 	MG_FONTSIZE_ARG,
 	MG_TEXTALIGN_ARG,
+	MG_LOGIC_ARG,
 };
 
 unsigned int mgPackArg(unsigned char arg, int x);
@@ -58,6 +59,7 @@ unsigned int mgPackArg(unsigned char arg, int x);
 #define mgSpacing(v)	(mgPackArg(MG_SPACING_ARG, (v)))
 #define mgFontSize(v)	(mgPackArg(MG_FONTSIZE_ARG, (v)))
 #define mgTextAlign(v)	(mgPackArg(MG_TEXTALIGN_ARG, (v)))
+#define mgLogic(v)		(mgPackArg(MG_LOGIC_ARG, (v)))
 
 struct MGargs {
 	unsigned int set;
@@ -71,6 +73,17 @@ struct MGargs {
 	unsigned char overflow;
 	unsigned char fontSize;
 	unsigned char textAlign;
+	unsigned char logic;
+};
+
+struct MGhit {
+	unsigned char clicked;
+	unsigned char pressed;
+	unsigned char dragged;
+	unsigned char released;
+	float mx, my;
+	float deltamx, deltamy;
+	float localmx, localmy;
 };
 
 enum MGwidgetType {
@@ -85,6 +98,12 @@ enum MGwidgetState {
 	MG_HOVER = 1<<0,
 	MG_ACTIVE = 1<<1,
 	MG_FOCUS = 1<<2,
+};
+
+enum MGlogic {
+	MG_CLICK = 1,
+	MG_DRAG = 2,
+	MG_TYPE = 3,
 };
 
 struct MGwidget {
@@ -123,26 +142,26 @@ struct MGargs mgArgs_(unsigned int first, ...);
 void mgFrameBegin(struct NVGcontext* vg, int width, int height, int mx, int my, int mbut);
 void mgFrameEnd();
 
-int mgPanelBegin(int dir, float x, float y, float width, float height, struct MGargs args);
-int mgPanelEnd();
+struct MGhit* mgPanelBegin(int dir, float x, float y, float width, float height, struct MGargs args);
+struct MGhit* mgPanelEnd();
 
-int mgBoxBegin(int dir, struct MGargs args);
-int mgBoxEnd();
+struct MGhit* mgBoxBegin(int dir, struct MGargs args);
+struct MGhit* mgBoxEnd();
 
-int mgText(const char* text, struct MGargs args);
-int mgIcon(int width, int height, struct MGargs args);
-int mgSlider(float* value, float vmin, float vmax, struct MGargs args);
-int mgInput(char* text, int maxtext, struct MGargs args);
+struct MGhit* mgText(const char* text, struct MGargs args);
+struct MGhit* mgIcon(int width, int height, struct MGargs args);
+struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGargs args);
+struct MGhit* mgInput(char* text, int maxtext, struct MGargs args);
 
 // Derivative
-int mgNumber(float* value, struct MGargs args);
-int mgSelect(int* value, const char** choices, int nchoises, struct MGargs args);
-int mgLabel(const char* text, struct MGargs args);
-int mgNumber3(float* x, float* y, float* z, const char* units, struct MGargs args);
-int mgColor(float* r, float* g, float* b, float* a, struct MGargs args);
-int mgCheckBox(const char* text, int* value, struct MGargs args);
-int mgButton(const char* text, struct MGargs args);
-int mgItem(const char* text, struct MGargs args);
+struct MGhit* mgNumber(float* value, struct MGargs args);
+struct MGhit* mgSelect(int* value, const char** choices, int nchoises, struct MGargs args);
+struct MGhit* mgLabel(const char* text, struct MGargs args);
+struct MGhit* mgNumber3(float* x, float* y, float* z, const char* units, struct MGargs args);
+struct MGhit* mgColor(float* r, float* g, float* b, float* a, struct MGargs args);
+struct MGhit* mgCheckBox(const char* text, int* value, struct MGargs args);
+struct MGhit* mgButton(const char* text, struct MGargs args);
+struct MGhit* mgItem(const char* text, struct MGargs args);
 
 
 #endif // MGUI_H

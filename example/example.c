@@ -163,7 +163,7 @@ int main()
 
 //		mgBeginPanel("NavMesh Options", 20,50, 250, MG_AUTO, MG_COL, MG_JUSTIFY, 0, 5);
 //		mgBeginPanel("NavMesh Options", 20,50, 250, winHeight - 50, MG_COL, MG_JUSTIFY, MG_SCROLL, 5,5);
-		mgPanelBegin(MG_COL, 20,50, 250, winHeight - 50, mgArgs(mgAlign(MG_JUSTIFY), mgOverflow(MG_SCROLL), mgPadding(5,5)));
+		mgPanelBegin(MG_COL, 20,50, 250, MG_AUTO_SIZE, mgArgs(mgAlign(MG_JUSTIFY), mgOverflow(MG_SCROLL), mgPadding(5,5)));
 
 //		mgText("NavMesh Options", );
 
@@ -187,7 +187,7 @@ int main()
 
 		mgInput(name, 64, mgArgs(0));
 		if (mgButton("Build", mgArgs(0))) {
-			printf("Build!!");
+			printf("Build!!\n");
 		}
 
 		mgBoxBegin(MG_ROW, mgArgs(0));
