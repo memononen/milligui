@@ -65,11 +65,10 @@ struct MUIstate
 {
 	int mx, my, mbut;
 	unsigned int active;
-	unsigned int hot;
-	unsigned int hotToBe;
-	int isHot;
-	int isActive;
-	int wentActive;
+	unsigned int hover;
+	unsigned int focus;
+	unsigned int clicked;
+
 	int dragX, dragY;
 	float dragOrig;
 
@@ -108,7 +107,7 @@ static struct MGwidget* popBox()
 	return NULL;
 }
 
-static int pushId()
+static void pushId()
 {
 	if (state.idStackCount < MG_ID_STACK_SIZE)
 		state.idStack[state.idStackCount++] = 0;
@@ -129,9 +128,14 @@ static struct MGwidget* getParent()
 
 static int genId()
 {
-	if (state.idStackCount == 0) return 0;
-	state.idStack[state.idStackCount-1]++;
-	return (state.panelCount << 16) | state.idStack[state.idStackCount-1];
+	unsigned int id = 0;
+	if (state.idStackCount > 0) {
+		state.idStack[state.idStackCount-1]++;
+		id |= (state.idStack[0] << 16);
+		if (state.idStackCount > 1)
+			id |= state.idStack[state.idStackCount-1];
+	}
+	return id;
 }
 
 static void addChildren(struct MGwidget* parent, struct MGwidget* w)
@@ -158,6 +162,7 @@ static struct MGwidget* allocWidget(int type)
 	return w;
 }
 
+/*
 inline int anyActive()
 {
 	return state.active != 0;
@@ -168,12 +173,12 @@ inline int isActive(unsigned int id)
 	return state.active == id;
 }
 
-inline int isHot(unsigned int id)
+inline int isHover(unsigned int id)
 {
-	return state.hot == id;
-}
+	return state.hover == id;
+}*/
 
-static int inRect(int x, int y, int w, int h)
+static int inRect(float x, float y, float w, float h)
 {
    return state.mx >= x && state.mx <= x+w && state.my >= y && state.my <= y+h;
 }
@@ -183,6 +188,7 @@ static void clearInput()
 	state.mbut = 0;
 }
 
+/*
 static void clearActive()
 {
 	state.active = 0;
@@ -196,12 +202,12 @@ static void setActive(unsigned int id)
 	state.wentActive = 1;
 }
 
-static void setHot(unsigned int id)
+static void setHover(unsigned int id)
 {
-   state.hotToBe = id;
+   state.hoverToBe = id;
 }
-
-
+*/
+/*
 static int buttonLogic(unsigned int id, int over)
 {
 	int res = 0;
@@ -233,6 +239,7 @@ static int buttonLogic(unsigned int id, int over)
 
 	return res;
 }
+*/
 
 int mgInit()
 {
@@ -255,25 +262,16 @@ void mgFrameBegin(struct NVGcontext* vg, int width, int height, int mx, int my, 
 	state.width = width;
 	state.height = height;
 
-	state.hot = state.hotToBe;
-	state.hotToBe = 0;
-
-	state.wentActive = 0;
-	state.isActive = 0;
-	state.isHot = 0;
-
 	state.vg = vg;
 
 	state.boxStackCount = 0;
-	state.idStackCount = 0;
 	state.panelCount = 0;
+
+	state.idStackCount = 1;
+	state.idStack[0] = 0;
 
 	textPoolSize = 0;
 	widgetPoolSize = 0;
-}
-
-static void updateLogic()
-{
 }
 
 static void isectBounds(float* dst, const float* src, float x, float y, float w, float h)
@@ -297,12 +295,173 @@ static int visible(const float* bounds, float x, float y, float w, float h)
 	return (maxx - minx) >= 0.0f && (maxy - miny) >= 0.0f;
 }
 
-static void drawPanel(struct MGwidget* panel, const float* bounds)
+static struct MGwidget* hitTest(struct MGwidget* box, const float* bounds)
+{
+	struct MGwidget* w;
+	float bbounds[4];
+	float wbounds[4];
+	struct MGwidget* hit = NULL;
+	struct MGwidget* child = NULL;
+
+	// calc box bounds
+	isectBounds(bbounds, bounds, box->x, box->y, box->width, box->height);
+
+	// Skip if invisible
+	if (bbounds[2] < 0.1f || bbounds[3] < 0.1f)
+		return NULL;
+
+	if (inRect(bbounds[0], bbounds[1], bbounds[2], bbounds[3]))
+		hit = box;
+
+	for (w = box->box.children; w != NULL; w = w->next) {
+
+		if (!visible(bbounds, w->x, w->y, w->width, w->height))
+			continue;
+
+		// calc widget bounds
+		isectBounds(wbounds, bbounds, w->x, w->y, w->width, w->height);
+
+		if (inRect(wbounds[0], wbounds[1], wbounds[2], wbounds[3]))
+			hit = w;
+
+		switch (w->type) {
+		case MG_BOX:
+			child = hitTest(w, bbounds);
+			if (child != NULL)
+				hit = child;
+			break;
+		case MG_TEXT:
+			break;
+		case MG_ICON:
+			break;
+		case MG_SLIDER:
+			// TODO hit knob separately?
+			break;
+		case MG_INPUT:
+			break;
+		}
+	}
+
+	// TODO: hit scrollbars?
+
+	return hit;
+} 
+
+static void updateState(struct MGwidget* box, unsigned int hover, unsigned int active, unsigned int focus)
+{
+	struct MGwidget* w;
+
+	box->state = 0;
+	if (box->id == hover)
+		box->state |= MG_HOVER;
+	if (box->id == active)
+		box->state |= MG_ACTIVE;
+	if (box->id == focus)
+		box->state |= MG_FOCUS;
+
+	for (w = box->box.children; w != NULL; w = w->next) {
+		w->state = 0;
+		if (w->id == hover)
+			w->state |= MG_HOVER;
+		if (w->id == active)
+			w->state |= MG_ACTIVE;
+		if (w->id == focus)
+			w->state |= MG_FOCUS;
+
+		if  (w->type == MG_BOX)
+			updateState(w, hover, active, focus);
+	}
+} 
+
+/*
+static void dumpId(struct MGwidget* box, int indent)
+{
+	struct MGwidget* w;
+	printf("%*sbox %d\n", indent, "", box->id);
+	for (w = box->box.children; w != NULL; w = w->next) {
+		if  (w->type == MG_BOX)
+			dumpId(w, indent+2);
+		else
+			printf("%*swid %d\n", indent+2, "", w->id);
+	}
+} 
+*/
+
+static void updateLogic(const float* bounds)
+{
+	int i;
+	struct MGwidget* hit = NULL;
+
+//	for (i = 0; i < state.panelCount; i++)
+//		dumpId(state.panels[i], 0);
+
+	for (i = 0; i < state.panelCount; i++) {
+		struct MGwidget* child = hitTest(state.panels[i], bounds);
+		if (child != NULL)
+			hit = child;
+	}
+
+	state.clicked = 0;
+	state.hover = 0;
+
+	if (state.active == 0) {
+		if (hit != NULL) {
+			state.hover = hit->id;
+			if (state.mbut & MG_MOUSE_PRESSED) {
+				state.active = hit->id;
+				state.focus = hit->id;
+			}
+		}
+	} else {
+		if (hit != NULL) {
+			state.hover = hit->id;
+		}
+		if (state.mbut & MG_MOUSE_RELEASED) {
+			state.clicked = state.hover;
+			state.active = 0;
+		}
+	}
+
+	for (i = 0; i < state.panelCount; i++)
+		updateState(state.panels[i], state.hover, state.active, state.focus);
+
+
+/*	bool res = false;
+	// process down
+	if (!anyActive())
+	{
+		if (over)
+			setHover(id);
+		if (isHot(id) && g_state.leftPressed)
+			setActive(id);
+	}
+
+	// if button is active, then react on left up
+	if (isActive(id))
+	{
+		g_state.isActive = true;
+		if (over)
+			setHot(id);
+		if (g_state.leftReleased)
+		{
+			if (isHot(id))
+				res = true;
+			clearActive();
+		}
+	}
+
+	if (isHot(id))
+		g_state.isHot = true;*/
+
+}
+
+
+static void drawBox(struct MGwidget* box, const float* bounds)
 {
 	float tw, x;
 	char str[32];
 	struct MGwidget* w;
-	float pbounds[4];
+	float bbounds[4];
 	float wbounds[4];
 
 	nvgFontFace(state.vg, "sans");
@@ -311,49 +470,52 @@ static void drawPanel(struct MGwidget* panel, const float* bounds)
 	nvgScissor(state.vg, bounds[0], bounds[1], bounds[2], bounds[3]);
 
 	nvgBeginPath(state.vg);
-	nvgRect(state.vg, panel->x, panel->y, panel->width, panel->height);
-	nvgFillColor(state.vg, nvgRGBA(255,255,255,32));
+	nvgRect(state.vg, box->x, box->y, box->width, box->height);
+
+	if (box->state & MG_ACTIVE)
+		nvgFillColor(state.vg, nvgRGBA(255,64,32,32));
+	else if (box->state & MG_HOVER)
+		nvgFillColor(state.vg, nvgRGBA(255,192,0,32));
+	else if (box->state & MG_FOCUS)
+		nvgFillColor(state.vg, nvgRGBA(0,192,255,32));
+	else
+		nvgFillColor(state.vg, nvgRGBA(255,255,255,32));
+
 	nvgFill(state.vg);
 
 	// calc panel bounds
-	isectBounds(pbounds, bounds, panel->x, panel->y, panel->width, panel->height);
+	isectBounds(bbounds, bounds, box->x, box->y, box->width, box->height);
 
-	if (pbounds[2] < 0.5f || pbounds[3] < 0.5f)
+	// Skip if invisible
+	if (bbounds[2] < 0.1f || bbounds[3] < 0.1f)
 		return;
 
-	for (w = panel->box.children; w != NULL; w = w->next) {
+	for (w = box->box.children; w != NULL; w = w->next) {
 
-		if (!visible(pbounds, w->x, w->y, w->width, w->height))
+		if (!visible(bbounds, w->x, w->y, w->width, w->height))
 			continue;
 
-		nvgScissor(state.vg, pbounds[0], pbounds[1], pbounds[2], pbounds[3]);
+		nvgScissor(state.vg, bbounds[0], bbounds[1], bbounds[2], bbounds[3]);
 
 		switch (w->type) {
 		case MG_BOX:
-			drawPanel(w, pbounds);
+			drawBox(w, bbounds);
 			break;
-/*		case MG_BUTTON:
-			nvgBeginPath(state.vg);
-			nvgRect(state.vg, w->x+0.5f, w->y+0.5f, w->width-1, w->height-1);
-			nvgStrokeColor(state.vg, nvgRGBA(255,255,255,128));
-			nvgStrokeWidth(state.vg,1.0f);
-			nvgStroke(state.vg);
-
-			isectBounds(wbounds, pbounds, w->x, w->y, w->width, w->height);
-			if (wbounds[2] > 0.0f && wbounds[3] > 0.0f) {
-				nvgScissor(state.vg, wbounds[0], wbounds[1], wbounds[2], wbounds[3]);
-				nvgFillColor(state.vg, nvgRGBA(255,255,255,255));
-				nvgFontSize(state.vg, TEXT_SIZE);
-				nvgTextAlign(state.vg, NVG_ALIGN_CENTER|NVG_ALIGN_MIDDLE);
-				nvgText(state.vg, w->x + w->width/2, w->y + w->height/2, w->button.text, NULL);
-			}
-			break;*/
 
 		case MG_TEXT:
-			isectBounds(wbounds, pbounds, w->x, w->y, w->width, w->height);
+			isectBounds(wbounds, bbounds, w->x, w->y, w->width, w->height);
 			if (wbounds[2] > 0.0f && wbounds[3] > 0.0f) {
 				nvgScissor(state.vg, wbounds[0], wbounds[1], wbounds[2], wbounds[3]);
-				nvgFillColor(state.vg, nvgRGBA(255,255,255,255));
+
+				if (w->state & MG_ACTIVE)
+					nvgFillColor(state.vg, nvgRGBA(255,64,32,255));
+				else if (w->state & MG_HOVER)
+					nvgFillColor(state.vg, nvgRGBA(255,192,0,255));
+				else if (w->state & MG_FOCUS)
+					nvgFillColor(state.vg, nvgRGBA(0,192,255,255));
+				else
+					nvgFillColor(state.vg, nvgRGBA(255,255,255,255));
+
 				nvgFontSize(state.vg, w->args.fontSize);
 				if (w->args.textAlign == MG_CENTER) {
 					nvgTextAlign(state.vg, NVG_ALIGN_CENTER|NVG_ALIGN_MIDDLE);
@@ -371,7 +533,16 @@ static void drawPanel(struct MGwidget* panel, const float* bounds)
 		case MG_ICON:
 			nvgBeginPath(state.vg);
 			nvgRect(state.vg, w->x, w->y, w->width, w->height);
-			nvgFillColor(state.vg, nvgRGBA(255,255,255,64));
+
+			if (w->state & MG_ACTIVE)
+				nvgFillColor(state.vg, nvgRGBA(255,64,32,64));
+			else if (w->state & MG_HOVER)
+				nvgFillColor(state.vg, nvgRGBA(255,192,0,64));
+			else if (w->state & MG_FOCUS)
+				nvgFillColor(state.vg, nvgRGBA(0,192,255,64));
+			else
+				nvgFillColor(state.vg, nvgRGBA(255,255,255,64));
+
 			nvgFill(state.vg);
 			break;
 
@@ -390,11 +561,17 @@ static void drawPanel(struct MGwidget* panel, const float* bounds)
 
 			nvgBeginPath(state.vg);
 			nvgCircle(state.vg, x, w->y+w->height/2, tw);
-			nvgFillColor(state.vg, nvgRGBA(0,0,0,255));
+
+			if (w->state & MG_ACTIVE)
+				nvgFillColor(state.vg, nvgRGBA(255,64,32,255));
+			if (w->state & MG_HOVER)
+				nvgFillColor(state.vg, nvgRGBA(255,192,0,255));
+			else if (w->state & MG_FOCUS)
+				nvgFillColor(state.vg, nvgRGBA(0,192,255,255));
+			else
+				nvgFillColor(state.vg, nvgRGBA(255,255,255,255));
+
 			nvgFill(state.vg);
-			nvgStrokeColor(state.vg, nvgRGBA(255,255,255,128));
-			nvgStrokeWidth(state.vg,1.0f);
-			nvgStroke(state.vg);
 			break;
 
 		case MG_INPUT:
@@ -404,10 +581,19 @@ static void drawPanel(struct MGwidget* panel, const float* bounds)
 			nvgStrokeWidth(state.vg,1.0f);
 			nvgStroke(state.vg);
 
-			isectBounds(wbounds, pbounds, w->x, w->y, w->width, w->height);
+			isectBounds(wbounds, bbounds, w->x, w->y, w->width, w->height);
 			if (wbounds[2] > 0.0f && wbounds[3] > 0.0f) {
 				nvgScissor(state.vg, wbounds[0], wbounds[1], wbounds[2], wbounds[3]);
-				nvgFillColor(state.vg, nvgRGBA(255,255,255,255));
+
+				if (w->state & MG_ACTIVE)
+					nvgFillColor(state.vg, nvgRGBA(255,64,32,255));
+				if (w->state & MG_HOVER)
+					nvgFillColor(state.vg, nvgRGBA(255,192,0,255));
+				else if (w->state & MG_FOCUS)
+					nvgFillColor(state.vg, nvgRGBA(0,192,255,255));
+				else
+					nvgFillColor(state.vg, nvgRGBA(255,255,255,255));
+
 				nvgFontSize(state.vg, w->args.fontSize);
 				if (w->args.textAlign == MG_CENTER) {
 					nvgTextAlign(state.vg, NVG_ALIGN_CENTER|NVG_ALIGN_MIDDLE);
@@ -424,16 +610,18 @@ static void drawPanel(struct MGwidget* panel, const float* bounds)
 		}
 	}
 
-	if (panel->args.overflow == MG_SCROLL) {
-		nvgScissor(state.vg, pbounds[0], pbounds[1], pbounds[2], pbounds[3]);
-		if (panel->dir == MG_ROW) {
-			if (panel->args.width > 0 && panel->args.width > panel->width) {
-				float x = panel->x + SCROLL_PAD;
-				float y = panel->y + panel->height - (SCROLL_SIZE + SCROLL_PAD);
-				float w = maxf(0, panel->width - SCROLL_PAD*2);
+	if (box->args.overflow == MG_SCROLL) {
+		nvgScissor(state.vg, bbounds[0], bbounds[1], bbounds[2], bbounds[3]);
+		if (box->dir == MG_ROW) {
+			float contentSize = box->args.width;
+			float containerSize = maxf(0.0f, box->width - box->args.paddingx*2);
+			if (contentSize > 0 && contentSize > containerSize) {
+				float x = box->x + SCROLL_PAD;
+				float y = box->y + box->height - (SCROLL_SIZE + SCROLL_PAD);
+				float w = maxf(0, box->width - SCROLL_PAD*2);
 				float h = SCROLL_SIZE;
 				float x2 = x;
-				float w2 = (panel->width / panel->args.width) * w;
+				float w2 = (containerSize / contentSize) * w;
 				nvgBeginPath(state.vg);
 				nvgRect(state.vg, x, y, w, h);
 				nvgFillColor(state.vg, nvgRGBA(0,0,0,64));
@@ -444,13 +632,15 @@ static void drawPanel(struct MGwidget* panel, const float* bounds)
 				nvgFill(state.vg);
 			}
 		} else {
-			if (panel->args.height > 0 && panel->args.height > panel->height) {
-				float x = panel->x + panel->width - (SCROLL_SIZE + SCROLL_PAD);
-				float y = panel->y + SCROLL_PAD;
+			float contentSize = box->args.height;
+			float containerSize = maxf(0.0f, box->height - box->args.paddingy*2);
+			if (contentSize > 0 && contentSize > containerSize) {
+				float x = box->x + box->width - (SCROLL_SIZE + SCROLL_PAD);
+				float y = box->y + SCROLL_PAD;
 				float w = SCROLL_SIZE;
-				float h = maxf(0, panel->height - SCROLL_PAD*2);
+				float h = maxf(0, box->height - SCROLL_PAD*2);
 				float y2 = y;
-				float h2 = (panel->height / panel->args.height) * h;
+				float h2 = (containerSize / contentSize) * h;
 				nvgBeginPath(state.vg);
 				nvgRect(state.vg, x, y, w, h);
 				nvgFillColor(state.vg, nvgRGBA(0,0,0,64));
@@ -462,21 +652,21 @@ static void drawPanel(struct MGwidget* panel, const float* bounds)
 			}
 		}
 	}
-
 } 
+
+static void drawPanels(const float* bounds)
+{
+	int i;
+	if (state.vg == NULL) return;	
+	for (i = 0; i < state.panelCount; i++)
+		drawBox(state.panels[i], bounds);
+}
 
 void mgFrameEnd()
 {
-	int i;
 	float bounds[4] = {0, 0, state.width, state.height};
-
-	updateLogic();
-
-	if (state.vg != NULL) {
-		for (i = 0; i < state.panelCount; i++)
-			drawPanel(state.panels[i], bounds);
-	}
-
+	updateLogic(bounds);
+	drawPanels(bounds);
 	clearInput();
 }
 

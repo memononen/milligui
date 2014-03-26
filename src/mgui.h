@@ -81,13 +81,19 @@ enum MGwidgetType {
 	MG_INPUT,
 };
 
+enum MGwidgetState {
+	MG_HOVER = 1<<0,
+	MG_ACTIVE = 1<<1,
+	MG_FOCUS = 1<<2,
+};
+
 struct MGwidget {
 	unsigned int id;
 	float x, y, width, height;
 	struct MGargs args;
 	unsigned char dir;
 	unsigned char type;
-
+	unsigned char state;
 	union {
 		struct {
 			char* text;

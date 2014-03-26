@@ -88,6 +88,7 @@ int main()
 	}
 
 	glfwSetKeyCallback(window, key);
+    glfwSetMouseButtonCallback(window, mousebutton);
 
 	glfwMakeContextCurrent(window);
 
