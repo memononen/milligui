@@ -135,9 +135,8 @@ struct MGwidget {
 };
 
 
-// TODO: support zero args.
-#define mgArgs(...) mgArgs_(__VA_ARGS__, MG_NONE)
-struct MGargs mgArgs_(unsigned int first, ...);
+#define mgArgs(...) mgArgs_(0, ##__VA_ARGS__, MG_NONE)
+struct MGargs mgArgs_(unsigned int dmmy, ...);
 
 void mgFrameBegin(struct NVGcontext* vg, int width, int height, int mx, int my, int mbut);
 void mgFrameEnd();

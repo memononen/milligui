@@ -795,16 +795,16 @@ unsigned int mgPackArg(unsigned char arg, int x)
 	return (unsigned int)arg | ((unsigned int)(x & 0x00ffffff) << 8);
 }
 
-struct MGargs mgArgs_(unsigned int first, ...)
+struct MGargs mgArgs_(unsigned int dummy, ...)
 {
 	va_list list;
 	struct MGargs args;
 	int v = MG_NONE;
 
-	memset(&args, 0, sizeof(first));
+	memset(&args, 0, sizeof(args));
 
-	va_start(list, first);
-	for (v = first; v != MG_NONE; v = va_arg(list, unsigned int)) {
+	va_start(list, dummy);
+	for (v = va_arg(list, unsigned int); v != MG_NONE; v = va_arg(list, unsigned int)) {
 		switch(v & 0xff) {
 			case MG_OVERFLOW_ARG:		args.overflow = v >> 8; break;
 			case MG_ALIGN_ARG:			args.align = v >> 8; break;
@@ -1059,9 +1059,9 @@ struct MGhit* mgCheckBox(const char* text, int* value, struct MGargs args)
 	struct MGhit* ret = mgBoxBegin(MG_ROW, boxArgs);
 		mgText(text, mgArgs(mgFontSize(LABEL_SIZE), mgGrow(1)));
 		if (*value)
-			mgIcon(CHECKBOX_SIZE, CHECKBOX_SIZE, mgArgs(0));
+			mgIcon(CHECKBOX_SIZE, CHECKBOX_SIZE, mgArgs());
 		else
-			mgIcon(CHECKBOX_SIZE, CHECKBOX_SIZE/4, mgArgs(0));
+			mgIcon(CHECKBOX_SIZE, CHECKBOX_SIZE/4, mgArgs());
 	mgBoxEnd();
 	if (ret != NULL)
 		*value = !*value;
@@ -1096,7 +1096,7 @@ struct MGhit* mgSelect(int* value, const char** choices, int nchoises, struct MG
 	struct MGargs boxArgs = mgMergeArgs(mgArgs(mgAlign(MG_CENTER), mgSpacing(SPACING), mgPadding(BUTTON_PADX, BUTTON_PADY), mgLogic(MG_CLICK)), args);
 	mgBoxBegin(MG_ROW, boxArgs);
 		mgText(choices[*value], mgArgs(mgFontSize(TEXT_SIZE), mgTextAlign(MG_START), mgGrow(1)));
-		mgIcon(CHECKBOX_SIZE, CHECKBOX_SIZE, mgArgs(0));
+		mgIcon(CHECKBOX_SIZE, CHECKBOX_SIZE, mgArgs());
 	return mgBoxEnd();
 }
 

@@ -155,10 +155,10 @@ int main()
 		// Menu bar
 //		mgBeginPanel("Menu", 0,0, winWidth, 30, MG_ROW, MG_JUSTIFY, 0, 0,0);
 		mgPanelBegin(MG_ROW, 0,0, winWidth, 30, mgArgs(mgAlign(MG_JUSTIFY)));
-			mgItem("File", mgArgs(0));
-			mgItem("Edit", mgArgs(0));
-			mgItem("Tools", mgArgs(0));
-			mgItem("View", mgArgs(0));
+			mgItem("File", mgArgs());
+			mgItem("Edit", mgArgs());
+			mgItem("Tools", mgArgs());
+			mgItem("View", mgArgs());
 		mgPanelEnd();
 
 //		mgBeginPanel("NavMesh Options", 20,50, 250, MG_AUTO, MG_COL, MG_JUSTIFY, 0, 5);
@@ -167,36 +167,36 @@ int main()
 
 //		mgText("NavMesh Options", );
 
-		mgLabel("Blending", mgArgs(0));
-		mgSelect(&blending, choices, 4, mgArgs(0));
+		mgLabel("Blending", mgArgs());
+		mgSelect(&blending, choices, 4, mgArgs());
 
-		mgLabel("Opacity", mgArgs(0));
-		mgSlider(&opacity, 0.0f, 1.0f, mgArgs(0));
+		mgLabel("Opacity", mgArgs());
+		mgSlider(&opacity, 0.0f, 1.0f, mgArgs());
 
-		mgLabel("Iterations", mgArgs(0));
-		mgNumber(&iterations, mgArgs(0));
+		mgLabel("Iterations", mgArgs());
+		mgNumber(&iterations, mgArgs());
 
-		mgLabel("Position", mgArgs(0));
-		mgNumber3(&position[0], &position[1], &position[3], "mm", mgArgs(0));
+		mgLabel("Position", mgArgs());
+		mgNumber3(&position[0], &position[1], &position[3], "mm", mgArgs());
 
-		mgLabel("Color", mgArgs(0));
-		mgColor(&color[0], &color[1], &color[2], &color[3], mgArgs(0));
+		mgLabel("Color", mgArgs());
+		mgColor(&color[0], &color[1], &color[2], &color[3], mgArgs());
 
-		mgCheckBox("Cull Enabled", &cull, mgArgs(0));
-		mgLabel("Name", mgArgs(0));
+		mgCheckBox("Cull Enabled", &cull, mgArgs());
+		mgLabel("Name", mgArgs());
 
-		mgInput(name, 64, mgArgs(0));
-		if (mgButton("Build", mgArgs(0))) {
+		mgInput(name, 64, mgArgs());
+		if (mgButton("Build", mgArgs())) {
 			printf("Build!!\n");
 		}
 
-		mgBoxBegin(MG_ROW, mgArgs(0));
+		mgBoxBegin(MG_ROW, mgArgs());
 			mgBoxBegin(MG_COL, mgArgs(mgGrow(1), mgAlign(MG_JUSTIFY)));
-				mgButton("Build1", mgArgs(0));
-				mgButton("Build2", mgArgs(0));
-				mgButton("Build3", mgArgs(0));
+				mgButton("Build1", mgArgs());
+				mgButton("Build2", mgArgs());
+				mgButton("Build3", mgArgs());
 			mgBoxEnd();
-			mgButton("Build4", mgArgs(0));
+			mgButton("Build4", mgArgs());
 		mgBoxEnd();
 
 		mgPanelEnd();
