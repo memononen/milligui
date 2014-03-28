@@ -28,25 +28,25 @@ styling is done using predefined styles, matched using simple selectors.
   - vec3 input
 
 - layout parameter for box
-	- width <#, auto>
+	- width: #, auto
 		- width of the box
 		- default is auto (fit to content)
-	- height: <#, auto>
+	- height: #, auto
 		- height of the box
 		- default is auto (fit to content)
-	- dir: <row, col>
+	- dir: row, col
 		- direction in which the child elements are stacked in
 		- defines main direction (cross direction is the opposite)
-	- grow: <#>
+	- grow: #
 		- controls how much the element is grown to fit into the free parent space
 		- default 0 (don’t grow)
-	- align: <start, end, centre, justify>
+	- align: start, end, centre, justify
 		- how to align in cross dir
-	- overflow: <fit, hidden, scroll>
+	- overflow: fit, hidden, scroll
 		- how to handle overflow in main direction (cross is always fit/shrink content)		
-	- logic <none, click, drag, type>
+	- logic: none, click, drag, type
 		- what kind of logic to apply to the element
-	- class <style>
+	- class: style
 		- visual representation of the element
 
 - presentation parameters
