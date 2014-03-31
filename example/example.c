@@ -108,6 +108,14 @@ int main()
 
 	mgInit();
 
+	mgCreateStyle("menubar", mgStyle(
+		mgFillColor(255,255,255,32)
+	), mgStyle(), mgStyle(), mgStyle());
+
+	mgCreateStyle("dialog", mgStyle(
+		mgFillColor(255,255,255,32),
+		mgCornerRadius(4)
+	), mgStyle(), mgStyle(), mgStyle());
 
 	glfwSetTime(0);
 
@@ -154,49 +162,49 @@ int main()
 
 		// Menu bar
 //		mgBeginPanel("Menu", 0,0, winWidth, 30, MG_ROW, MG_JUSTIFY, 0, 0,0);
-		mgPanelBegin(MG_ROW, 0,0, winWidth, 30, mgArgs(mgAlign(MG_JUSTIFY)));
-			mgItem("File", mgArgs());
-			mgItem("Edit", mgArgs());
-			mgItem("Tools", mgArgs());
-			mgItem("View", mgArgs());
+		mgPanelBegin(MG_ROW, 0,0, winWidth, 30, mgStyle(mgTag("menubar"), mgAlign(MG_JUSTIFY)));
+			mgItem("File", mgStyle());
+			mgItem("Edit", mgStyle());
+			mgItem("Tools", mgStyle());
+			mgItem("View", mgStyle());
 		mgPanelEnd();
 
 //		mgBeginPanel("NavMesh Options", 20,50, 250, MG_AUTO, MG_COL, MG_JUSTIFY, 0, 5);
 //		mgBeginPanel("NavMesh Options", 20,50, 250, winHeight - 50, MG_COL, MG_JUSTIFY, MG_SCROLL, 5,5);
-		mgPanelBegin(MG_COL, 20,50, 250, MG_AUTO_SIZE, mgArgs(mgAlign(MG_JUSTIFY), mgOverflow(MG_SCROLL), mgPadding(5,5)));
+		mgPanelBegin(MG_COL, 20,50, 250, MG_AUTO_SIZE, mgStyle(mgTag("dialog"), mgAlign(MG_JUSTIFY), mgOverflow(MG_SCROLL), mgPadding(10,10)));
 
 //		mgText("NavMesh Options", );
 
-		mgLabel("Blending", mgArgs());
-		mgSelect(&blending, choices, 4, mgArgs());
+		mgLabel("Blending", mgStyle());
+		mgSelect(&blending, choices, 4, mgStyle());
 
-		mgLabel("Opacity", mgArgs());
-		mgSlider(&opacity, 0.0f, 1.0f, mgArgs());
+		mgLabel("Opacity", mgStyle());
+		mgSlider(&opacity, 0.0f, 1.0f, mgStyle());
 
-		mgLabel("Iterations", mgArgs());
-		mgNumber(&iterations, mgArgs());
+		mgLabel("Iterations", mgStyle());
+		mgNumber(&iterations, mgStyle());
 
-		mgLabel("Position", mgArgs());
-		mgNumber3(&position[0], &position[1], &position[3], "mm", mgArgs());
+		mgLabel("Position", mgStyle());
+		mgNumber3(&position[0], &position[1], &position[3], "mm", mgStyle());
 
-		mgLabel("Color", mgArgs());
-		mgColor(&color[0], &color[1], &color[2], &color[3], mgArgs());
+		mgLabel("Color", mgStyle());
+		mgColor(&color[0], &color[1], &color[2], &color[3], mgStyle());
 
-		mgCheckBox("Cull Enabled", &cull, mgArgs());
-		mgLabel("Name", mgArgs());
+		mgCheckBox("Cull Enabled", &cull, mgStyle());
+		mgLabel("Name", mgStyle());
 
-		mgInput(name, 64, mgArgs());
-		if (mgButton("Build", mgArgs())) {
+		mgInput(name, 64, mgStyle());
+		if (mgButton("Build", mgStyle())) {
 			printf("Build!!\n");
 		}
 
-		mgBoxBegin(MG_ROW, mgArgs());
-			mgBoxBegin(MG_COL, mgArgs(mgGrow(1), mgAlign(MG_JUSTIFY)));
-				mgButton("Build1", mgArgs());
-				mgButton("Build2", mgArgs());
-				mgButton("Build3", mgArgs());
+		mgBoxBegin(MG_ROW, mgStyle());
+			mgBoxBegin(MG_COL, mgStyle(mgGrow(1), mgAlign(MG_JUSTIFY)));
+				mgButton("Build1", mgStyle());
+				mgButton("Build2", mgStyle());
+				mgButton("Build3", mgStyle());
 			mgBoxEnd();
-			mgButton("Build4", mgArgs());
+			mgButton("Build4", mgStyle());
 		mgBoxEnd();
 
 		mgPanelEnd();
