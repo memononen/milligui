@@ -45,7 +45,7 @@ enum MGargTypes {
 	MG_TEXTALIGN_ARG,
 	MG_LOGIC_ARG,
 	MG_STYLE_ARG,
-	MG_TEXTCOLOR_ARG,
+	MG_CONTENTCOLOR_ARG,
 	MG_FILLCOLOR_ARG,
 	MG_BORDERCOLOR_ARG,
 	MG_BORDERSIZE_ARG,
@@ -80,7 +80,7 @@ struct MGarg {
 #define mgFontSize(v)			(mgPackArg(MG_FONTSIZE_ARG, (v)))
 #define mgTextAlign(v)			(mgPackArg(MG_TEXTALIGN_ARG, (v)))
 #define mgLogic(v)				(mgPackArg(MG_LOGIC_ARG, (v)))
-#define mgTextColor(r,g,b,a)	(mgPackArg(MG_TEXTCOLOR_ARG, mgRGBA((r),(b),(b),(a))))
+#define mgContentColor(r,g,b,a)	(mgPackArg(MG_CONTENTCOLOR_ARG, mgRGBA((r),(b),(b),(a))))
 #define mgFillColor(r,g,b,a)	(mgPackArg(MG_FILLCOLOR_ARG, mgRGBA((r),(b),(b),(a))))
 #define mgBorderColor(r,g,b,a)	(mgPackArg(MG_BORDERCOLOR_ARG, mgRGBA((r),(b),(b),(a))))
 #define mgBorderSize(v)			(mgPackArg(MG_BORDERSIZE_ARG, (v)))
@@ -89,12 +89,11 @@ struct MGarg {
 
 struct MGstyle {
 	unsigned int set;
-	unsigned int textColor;
+	unsigned int contentColor;
 	unsigned int fillColor;
 	unsigned int borderColor;
 	unsigned short width;
 	unsigned short height;
-	unsigned short style;
 	unsigned char spacing;
 	unsigned char paddingx;
 	unsigned char paddingy;
@@ -118,6 +117,7 @@ unsigned int mgRGBA(unsigned char r, unsigned char g, unsigned char b, unsigned 
 unsigned int mgFindStyle(const char* name);
 unsigned int mgCreateStyle(const char* selector, struct MGstyle normal, struct MGstyle hover, struct MGstyle active, struct MGstyle focus);
 
+void* mgTempMalloc(int size);
 
 struct MGhit {
 	unsigned char clicked;
@@ -135,8 +135,8 @@ enum MGwidgetType {
 	MG_BOX,
 	MG_TEXT,
 	MG_ICON,
-	MG_SLIDER,
 	MG_INPUT,
+	MG_CANVAS,
 };
 
 enum MGwidgetState {
@@ -146,6 +146,7 @@ enum MGwidgetState {
 	MG_FOCUS = 1<<2,
 };
 
+typedef void (*MGcanvasRenderFun)(void* uptr, struct NVGcontext* vg, struct MGwidget* w, const float* bounds);
 
 struct MGwidget {
 	unsigned int id;
@@ -164,13 +165,12 @@ struct MGwidget {
 			float value;
 		} input;
 		struct {
-			float value;
-			float vmin;
-			float vmax;
-		} slider;
-		struct {
 			struct MGwidget* children;
 		} box;
+		struct {
+			MGcanvasRenderFun render;
+			void* uptr;
+		} canvas;
 	};
 	struct MGwidget* next;
 	struct MGwidget* parent;
@@ -189,6 +189,8 @@ struct MGhit* mgText(const char* text, struct MGstyle args);
 struct MGhit* mgIcon(int width, int height, struct MGstyle args);
 struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGstyle args);
 struct MGhit* mgInput(char* text, int maxtext, struct MGstyle args);
+
+struct MGhit* mgCanvas(MGcanvasRenderFun cb, void* uptr, struct MGstyle args);
 
 // Derivative
 struct MGhit* mgNumber(float* value, struct MGstyle args);

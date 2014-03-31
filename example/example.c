@@ -185,7 +185,7 @@ int main()
 		mgNumber(&iterations, mgStyle());
 
 		mgLabel("Position", mgStyle());
-		mgNumber3(&position[0], &position[1], &position[3], "mm", mgStyle());
+		mgNumber3(&position[0], &position[1], &position[2], "mm", mgStyle());
 
 		mgLabel("Color", mgStyle());
 		mgColor(&color[0], &color[1], &color[2], &color[3], mgStyle());

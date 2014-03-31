@@ -27,6 +27,20 @@ static float clampf(float a, float mn, float mx) { return a < mn ? mn : (a > mx 
 #define SCROLL_SIZE (TEXT_SIZE/4)
 #define SCROLL_PAD (SCROLL_SIZE/2)
 
+
+#define TEMP_ALLOC_SIZE 16000
+static unsigned char tempPool[TEMP_ALLOC_SIZE];
+static int tempPoolSize = 0;
+
+void* mgTempMalloc(int size)
+{
+	if (tempPoolSize+size >= TEMP_ALLOC_SIZE)
+		return NULL;
+	tempPoolSize += size;
+	return &tempPool[tempPoolSize - size];
+}
+
+
 #define TEXT_POOL_SIZE 8000
 
 static char textPool[TEXT_POOL_SIZE];
@@ -225,7 +239,7 @@ int mgInit()
 		mgFontSize(TEXT_SIZE),
 		mgAlign(MG_START),
 		mgSpacing(SPACING),
-		mgTextColor(255,255,255,255)
+		mgContentColor(255,255,255,255)
 	), mgStyle(), mgStyle(), mgStyle());
 
 	mgCreateStyle("icon", mgStyle(
@@ -290,15 +304,15 @@ int mgInit()
 		mgStyle(
 			mgTextAlign(MG_CENTER),
 			mgFontSize(TEXT_SIZE),
-			mgTextColor(255,255,255,255)
+			mgContentColor(255,255,255,255)
 		),
 		// Hover
 		mgStyle(
-			mgTextColor(255,255,255,255)
+			mgContentColor(255,255,255,255)
 		),
 		// Active
 		mgStyle(
-			mgTextColor(0,0,0,255)
+			mgContentColor(0,0,0,255)
 		),
 		// Focus
 		mgStyle()
@@ -337,15 +351,15 @@ int mgInit()
 		mgStyle(
 			mgTextAlign(MG_START),
 			mgFontSize(TEXT_SIZE),
-			mgTextColor(255,255,255,255)
+			mgContentColor(255,255,255,255)
 		),
 		// Hover
 		mgStyle(
-			mgTextColor(255,255,255,255)
+			mgContentColor(255,255,255,255)
 		),
 		// Active
 		mgStyle(
-			mgTextColor(0,0,0,255)
+			mgContentColor(0,0,0,255)
 		),
 		// Focus
 		mgStyle()
@@ -377,15 +391,15 @@ int mgInit()
 		mgStyle(
 			mgTextAlign(MG_START),
 			mgFontSize(TEXT_SIZE),
-			mgTextColor(255,255,255,192)
+			mgContentColor(255,255,255,192)
 		),
 		// Hover
 		mgStyle(
-			mgTextColor(255,255,255,255)
+			mgContentColor(255,255,255,255)
 		),
 		// Active
 		mgStyle(
-			mgTextColor(0,0,0,255)
+			mgContentColor(0,0,0,255)
 		),
 		// Focus
 		mgStyle()
@@ -400,7 +414,7 @@ int mgInit()
 			mgPadding(BUTTON_PADX/2, BUTTON_PADY),
 			mgLogic(MG_TYPE),
 			mgSpacing(SPACING),
-			mgTextColor(255,255,255,255),
+			mgContentColor(255,255,255,255),
 			mgBorderColor(255,255,255,128),
 			mgBorderSize(1)
 		),
@@ -428,7 +442,7 @@ int mgInit()
 			mgPadding(BUTTON_PADX/2, BUTTON_PADY),
 			mgLogic(MG_TYPE),
 			mgSpacing(SPACING),
-			mgTextColor(255,255,255,255),
+			mgContentColor(255,255,255,255),
 			mgBorderColor(255,255,255,128),
 			mgBorderSize(1)
 		),
@@ -454,7 +468,7 @@ int mgInit()
 			mgFontSize(LABEL_SIZE),
 			mgAlign(MG_START),
 			mgSpacing(LABEL_SPACING),
-			mgTextColor(255,255,255,192)
+			mgContentColor(255,255,255,192)
 		),
 		// Hover, active, focus
 		mgStyle(), mgStyle(), mgStyle()
@@ -514,6 +528,7 @@ void mgFrameBegin(struct NVGcontext* vg, int width, int height, int mx, int my, 
 	state.idStackCount = 1;
 	state.idStack[0] = 0;
 
+	tempPoolSize = 0;
 	textPoolSize = 0;
 	widgetPoolSize = 0;
 }
@@ -577,9 +592,6 @@ static struct MGwidget* hitTest(struct MGwidget* box, const float* bounds)
 		case MG_TEXT:
 			break;
 		case MG_ICON:
-			break;
-		case MG_SLIDER:
-			// TODO hit knob separately?
 			break;
 		case MG_INPUT:
 			break;
@@ -776,7 +788,7 @@ static void drawRect(struct MGwidget* w)
 
 static void drawText(struct MGwidget* w)
 {
-	nvgFillColor(state.vg, w->style.textColor);
+	nvgFillColor(state.vg, w->style.contentColor);
 	nvgFontSize(state.vg, w->style.fontSize);
 	if (w->style.textAlign == MG_CENTER) {
 		nvgTextAlign(state.vg, NVG_ALIGN_CENTER|NVG_ALIGN_MIDDLE);
@@ -797,24 +809,18 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 	float bbounds[4];
 	float wbounds[4];
 
+
+
+
+
+
+
 	nvgFontFace(state.vg, "sans");
 	nvgFontSize(state.vg, TEXT_SIZE);
 
 	nvgScissor(state.vg, bounds[0], bounds[1], bounds[2], bounds[3]);
 
 	drawRect(box);
-/*
-	nvgBeginPath(state.vg);
-	nvgRect(state.vg, w->x, w->y, w->width, w->height);
-	if (w->state & MG_ACTIVE)
-		nvgFillColor(state.vg, nvgRGBA(255,64,32,32));
-	else if (w->state & MG_HOVER)
-		nvgFillColor(state.vg, nvgRGBA(255,192,0,32));
-	else if (w->state & MG_FOCUS)
-		nvgFillColor(state.vg, nvgRGBA(0,192,255,32));
-	else
-		nvgFillColor(state.vg, nvgRGBA(255,255,255,32));
-	nvgFill(state.vg);*/
 
 	// calc panel bounds
 	isectBounds(bbounds, bounds, box->x, box->y, box->width, box->height);
@@ -846,81 +852,22 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 
 		case MG_ICON:
 			drawRect(w);
-
-/*			nvgBeginPath(state.vg);
-			nvgRect(state.vg, w->x, w->y, w->width, w->height);
-
-			if (w->state & MG_ACTIVE)
-				nvgFillColor(state.vg, nvgRGBA(255,64,32,64));
-			else if (w->state & MG_HOVER)
-				nvgFillColor(state.vg, nvgRGBA(255,192,0,64));
-			else if (w->state & MG_FOCUS)
-				nvgFillColor(state.vg, nvgRGBA(0,192,255,64));
-			else
-				nvgFillColor(state.vg, nvgRGBA(255,255,255,64));
-
-			nvgFill(state.vg);*/
-			break;
-
-		case MG_SLIDER:
-
-			tw = SLIDER_HANDLE/2;
-
-//			nvgFillColor(state.vg, w->style.textColor);
-
-			nvgBeginPath(state.vg);
-			nvgMoveTo(state.vg, w->x+tw, w->y+w->height/2+0.5f);
-			nvgLineTo(state.vg, w->x-tw + w->width, w->y+w->height/2+0.5f);
-			nvgStrokeColor(state.vg, nvgRGBA(255,255,255,128));
-			nvgStrokeWidth(state.vg,1.0f);
-			nvgStroke(state.vg);
-
-			x = w->x + tw + (w->slider.value - w->slider.vmin) / (w->slider.vmax - w->slider.vmin) * (w->width - tw*2);
-
-			if (isStyleSet(&w->style, MG_FILLCOLOR_ARG)) {
-				nvgBeginPath(state.vg);
-				nvgCircle(state.vg, x, w->y+w->height/2, tw);
-				nvgFillColor(state.vg, w->style.fillColor);
-				nvgFill(state.vg);
-			}
-
-			if (isStyleSet(&w->style, MG_BORDERCOLOR_ARG)) {
-				float s = w->style.borderSize * 0.5f;
-				nvgBeginPath(state.vg);
-				nvgCircle(state.vg, x, w->y+w->height/2, tw-s);
-				nvgStrokeWidth(state.vg, w->style.borderSize);
-				nvgStrokeColor(state.vg, w->style.borderColor);
-				nvgStroke(state.vg);
-			}
-
-/*			nvgBeginPath(state.vg);
-			nvgCircle(state.vg, x, w->y+w->height/2, tw);
-
-			if (w->state & MG_ACTIVE)
-				nvgFillColor(state.vg, nvgRGBA(255,64,32,255));
-			if (w->state & MG_HOVER)
-				nvgFillColor(state.vg, nvgRGBA(255,192,0,255));
-			else if (w->state & MG_FOCUS)
-				nvgFillColor(state.vg, nvgRGBA(0,192,255,255));
-			else
-				nvgFillColor(state.vg, nvgRGBA(255,255,255,255));
-
-			nvgFill(state.vg);*/
 			break;
 
 		case MG_INPUT:
-/*			nvgBeginPath(state.vg);
-			nvgRect(state.vg, w->x+0.5f, w->y+0.5f, w->width-1, w->height-1);
-			nvgStrokeColor(state.vg, nvgRGBA(255,255,255,128));
-			nvgStrokeWidth(state.vg,1.0f);
-			nvgStroke(state.vg);*/
-
 			drawRect(w);
 
 			isectBounds(wbounds, bbounds, w->x, w->y, w->width, w->height);
 			if (wbounds[2] > 0.0f && wbounds[3] > 0.0f) {
 				nvgScissor(state.vg, wbounds[0], wbounds[1], wbounds[2], wbounds[3]);
 				drawText(w);
+			}
+			break;
+
+		case MG_CANVAS:
+			isectBounds(wbounds, bbounds, w->x, w->y, w->width, w->height);
+			if (w->canvas.render != NULL && wbounds[2] > 0.0f && wbounds[3] > 0.0f) {
+				w->canvas.render(w->canvas.uptr, state.vg, w, wbounds);
 			}
 			break;
 		}
@@ -1180,8 +1127,7 @@ struct MGstyle mgStyle_(unsigned int dummy, ...)
 			case MG_FONTSIZE_ARG:		style.fontSize = arg.v; break;
 			case MG_TEXTALIGN_ARG:		style.textAlign = arg.v; break;
 			case MG_LOGIC_ARG:			style.logic = arg.v; break;
-			case MG_STYLE_ARG:			style.style = arg.v; break;
-			case MG_TEXTCOLOR_ARG:		style.textColor = arg.v; break;
+			case MG_CONTENTCOLOR_ARG:	style.contentColor = arg.v; break;
 			case MG_FILLCOLOR_ARG:		style.fillColor = arg.v; break;
 			case MG_BORDERCOLOR_ARG:	style.borderColor = arg.v; break;
 			case MG_BORDERSIZE_ARG:		style.borderSize = arg.v; break;
@@ -1209,8 +1155,7 @@ struct MGstyle mgMergeStyles(struct MGstyle dst, struct MGstyle src)
 	if (isStyleSet(&src, MG_FONTSIZE_ARG))		dst.fontSize = src.fontSize;
 	if (isStyleSet(&src, MG_TEXTALIGN_ARG))		dst.textAlign = src.textAlign;
 	if (isStyleSet(&src, MG_LOGIC_ARG))			dst.logic = src.logic;
-//	if (isStyleSet(&src, MG_STYLE_ARG))			dst.style = src.style;
-	if (isStyleSet(&src, MG_TEXTCOLOR_ARG))		dst.textColor = src.textColor;
+	if (isStyleSet(&src, MG_CONTENTCOLOR_ARG))	dst.contentColor = src.contentColor;
 	if (isStyleSet(&src, MG_FILLCOLOR_ARG))		dst.fillColor = src.fillColor;
 	if (isStyleSet(&src, MG_BORDERCOLOR_ARG))	dst.borderColor = src.borderColor;
 	if (isStyleSet(&src, MG_BORDERSIZE_ARG))	dst.borderSize = src.borderSize;
@@ -1409,9 +1354,8 @@ static struct MGnamedStyle* selectStyle(char** path, int npath)
 	return smax;
 }
 
-static struct MGstyle computeStyle(struct MGwidget* w, struct MGstyle style)
+static struct MGstyle computeStyle(unsigned char wstate, struct MGstyle style)
 {
-	unsigned char wstate = getState(w);
 	int i = 0;
 	char* path[100];
 	int npath = 0;
@@ -1436,29 +1380,8 @@ static struct MGstyle computeStyle(struct MGwidget* w, struct MGstyle style)
 			style = mgMergeStyles(match->focus, style);
 		else
 			style = mgMergeStyles(match->normal, style);
-
-/*		if (wstate == MG_NORMAL)
-			style = mgMergeStyles(match->normal, style);
-		else if (wstate == MG_HOVER)
-			style = mgMergeStyles(match->hover, style);
-		else if (wstate == MG_ACTIVE)
-			style = mgMergeStyles(match->active, style);
-		else if (wstate == MG_FOCUS)
-			style = mgMergeStyles(match->focus, style);*/
 	}
 	return style;
-
-/*	if (style.style == 0) {
-		return style;
-	}
-	if (st == MG_NORMAL) {
-		return mgMergeStyles(stylePool[style.style-1].style[0], style);
-	}
-	if (st & MG_ACTIVE) i = 2;
-	else if (st & MG_HOVER) i = 1;
-	else if (st & MG_FOCUS) i = 3;
-	// Append state to normal state before applying custom changes.
-	return mgMergeStyles(mgMergeStyles(stylePool[style.style-1].style[0], stylePool[style.style-1].style[i]), style);*/
 }
 
 struct MGhit* mgPanelBegin(int dir, float x, float y, float width, float height, struct MGstyle style)
@@ -1470,7 +1393,7 @@ struct MGhit* mgPanelBegin(int dir, float x, float y, float width, float height,
 	w->width = width;
 	w->height = height;
 	w->dir = dir;
-	w->style = computeStyle(w, mgMergeStyles(mgStyle(mgTag("panel")), style));
+	w->style = computeStyle(getState(w), mgMergeStyles(mgStyle(mgTag("panel")), style));
 
 	addPanel(w);
 	pushId();
@@ -1500,7 +1423,7 @@ struct MGhit* mgBoxBegin(int dir, struct MGstyle style)
 	w->height = MG_AUTO_SIZE;
 	w->dir = dir;
 
-	w->style = computeStyle(w, mgMergeStyles(mgStyle(mgTag("box")), style));
+	w->style = computeStyle(getState(w), mgMergeStyles(mgStyle(mgTag("box")), style));
 
 	pushBox(w);
 	pushTag(w->style.tag);
@@ -1526,7 +1449,7 @@ struct MGhit* mgText(const char* text, struct MGstyle style)
 
 //	printf("text state=%d\n", getState(w));
 
-	w->style = computeStyle(w, mgMergeStyles(mgStyle(mgTag("text")), style));
+	w->style = computeStyle(getState(w), mgMergeStyles(mgStyle(mgTag("text")), style));
 
 	textSize(w->text.text, w->style.fontSize, &tw, &th);
 	if (!isStyleSet(&w->style, MG_WIDTH_ARG)) {
@@ -1548,7 +1471,7 @@ struct MGhit* mgIcon(int width, int height, struct MGstyle style)
 {
 	struct MGwidget* w = allocWidget(MG_ICON);
 
-	w->style = computeStyle(w, mgMergeStyles(mgStyle(mgTag("icon"), mgWidth(width), mgWidth(height)), style));
+	w->style = computeStyle(getState(w), mgMergeStyles(mgStyle(mgTag("icon"), mgWidth(width), mgWidth(height)), style));
 
 	w->style.width += w->style.paddingx*2;
 	w->style.height += w->style.paddingy*2;
@@ -1556,39 +1479,97 @@ struct MGhit* mgIcon(int width, int height, struct MGstyle style)
 	return hitResult(w);
 }
 
-
-struct MGsliderState {
-	float value;	
-};
-
-struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGstyle style)
+struct MGhit* mgCanvas(MGcanvasRenderFun cb, void* uptr, struct MGstyle style)
 {
-	float tw, th;
-	struct MGwidget* w = allocWidget(MG_SLIDER);
-	struct MGhit* res = NULL;
+	struct MGwidget* w = allocWidget(MG_CANVAS);
 
-	w->style = computeStyle(w, mgMergeStyles(mgStyle(mgTag("slider"), mgWidth(DEFAULT_SLIDERW)), style));
+	w->canvas.render = cb;
+	w->canvas.uptr = uptr;
 
-	if (!isStyleSet(&w->style, MG_HEIGHT_ARG)) {
-		textSize(NULL, w->style.fontSize, &tw,&th);
-		w->style.height = th;
-		w->style.set |= 1<<MG_HEIGHT_ARG;
-	}
+	w->style = computeStyle(getState(w), mgMergeStyles(mgStyle(mgTag("canvas")), style));
 
 	w->style.width += w->style.paddingx*2;
 	w->style.height += w->style.paddingy*2;
 
+	return hitResult(w);
+}
+
+struct MGsliderState {
+	float value;
+	float vmin, vmax;
+	float hr;
+};
+
+static void drawSlider(void* uptr, struct NVGcontext* vg, struct MGwidget* w, const float* bounds)
+{
+	struct MGsliderState* slider = (struct MGsliderState*)uptr;
+	float hr = slider->hr;
+	float x;
+
+/*	nvgBeginPath(vg);
+	nvgRect(vg, w->x, w->y, w->width, w->height);
+	nvgFillColor(vg, nvgRGBA(255,0,0,128));
+	nvgFill(vg);*/
+
+	nvgBeginPath(vg);
+	nvgMoveTo(vg, w->x+hr, (int)(w->y+w->height/2)+0.5f);
+	nvgLineTo(vg, w->x-hr + w->width, (int)(w->y+w->height/2)+0.5f);
+	nvgStrokeColor(vg, nvgRGBA(255,255,255,128));
+	nvgStrokeWidth(vg,1.0f);
+	nvgStroke(vg);
+
+	x = w->x + hr + (slider->value - slider->vmin) / (slider->vmax - slider->vmin) * (w->width - hr*2);
+
+	if (isStyleSet(&w->style, MG_FILLCOLOR_ARG)) {
+		nvgBeginPath(vg);
+		nvgCircle(vg, x, w->y+w->height/2, hr);
+		nvgFillColor(vg, w->style.fillColor);
+		nvgFill(vg);
+	}
+
+	if (isStyleSet(&w->style, MG_BORDERCOLOR_ARG)) {
+		float s = w->style.borderSize * 0.5f;
+		nvgBeginPath(vg);
+		nvgCircle(vg, x, w->y+w->height/2, hr-s);
+		nvgStrokeWidth(vg, w->style.borderSize);
+		nvgStrokeColor(vg, w->style.borderColor);
+		nvgStroke(vg);
+	}
+}
+
+struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGstyle style)
+{
+	float hr = 0;
+	struct MGhit* res = NULL;
+	struct MGstyle comp;
+	struct MGsliderState* slider = (struct MGsliderState*)mgTempMalloc(sizeof(struct MGsliderState));
+	if (slider == NULL)
+		return NULL;
+
+	style = mgMergeStyles(mgStyle(mgTag("slider"), mgWidth(DEFAULT_SLIDERW)), style);
+	comp = computeStyle(MG_NORMAL, style);
+
+	if (!isStyleSet(&style, MG_HEIGHT_ARG)) {
+		float th;
+		textSize(NULL, comp.fontSize, NULL, &th);
+		style.height = th;
+		style.set |= 1<<MG_HEIGHT_ARG;
+	}
+
+	res = mgCanvas(drawSlider, slider, style);
+
+	hr = style.height / 2;
+
 	// Logic
-	res = hitResult(w);
 	if (res != NULL) {
 		struct MGsliderState* state = (struct MGsliderState*)res->storage;
-		float xmin = res->bounds[0] + SLIDER_HANDLE/2;
-		float xmax = res->bounds[0]+res->bounds[2] - SLIDER_HANDLE/2;
+		float xmin = res->bounds[0] + hr;
+		float xmax = res->bounds[0]+res->bounds[2] - hr;
 		float xrange = maxf(1.0f, xmax - xmin);
 		if (res->pressed) {
 			float u = (*value - vmin) / (vmax - vmin);
 			float x = xmin + u * (xmax - xmin);
-			if (res->mx < (x-SLIDER_HANDLE/2) || res->mx > (x+SLIDER_HANDLE/2)) {
+			if (res->mx < (x-hr) || res->mx > (x+hr)) {
 				// If hit outside the handle, skip there directly.
 				float v = clampf((res->mx - xmin) / xrange, 0.0f, 1.0f);
 				*value = clampf(vmin + v * (vmax - vmin), vmin, vmax);
@@ -1601,9 +1582,10 @@ struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGstyle styl
 		}
 	}
 
-	w->slider.value = *value;
-	w->slider.vmin = vmin;
-	w->slider.vmax = vmax;
+	slider->value = *value;
+	slider->vmin = vmin;
+	slider->vmax = vmax;
+	slider->hr = hr;
 
 	return res;
 }
@@ -1616,7 +1598,7 @@ struct MGhit* mgInput(char* text, int maxtext, struct MGstyle style)
 	w->input.text = allocTextLen(text, maxtext);
 	w->input.maxtext = maxtext;
 
-	w->style = computeStyle(w, mgMergeStyles(mgStyle(mgTag("input"), mgWidth(DEFAULT_TEXTW)), style));
+	w->style = computeStyle(getState(w), mgMergeStyles(mgStyle(mgTag("input"), mgWidth(DEFAULT_TEXTW)), style));
 
 	textSize(NULL, w->style.fontSize, &tw,&th);
 	w->style.height = th;
