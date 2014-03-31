@@ -239,8 +239,8 @@ int mgInit()
 			mgFontSize(TEXT_SIZE),
 			mgPadding(0, BUTTON_PADY),
 			mgLogic(MG_DRAG),
-			mgFillColor(255,255,255,192),
-			mgBorderColor(255,255,255,255),
+			mgFillColor(200,200,200,255),
+			mgBorderColor(32,32,32,255),
 			mgBorderSize(1)
 		),
 		// Hover
@@ -249,9 +249,8 @@ int mgInit()
 		),
 		// Active
 		mgStyle(
-			mgFillColor(0,0,0,192),
-			mgBorderColor(255,255,255,255),
-			mgBorderSize(2)
+			mgFillColor(32,32,32,255),
+			mgBorderColor(255,255,255,255)
 		),
 		// Focus
 		mgStyle(
@@ -289,6 +288,7 @@ int mgInit()
 	mgCreateStyle("button.text",
 		// Normal
 		mgStyle(
+			mgTextAlign(MG_CENTER),
 			mgFontSize(TEXT_SIZE),
 			mgTextColor(255,255,255,255)
 		),
@@ -335,6 +335,7 @@ int mgInit()
 	mgCreateStyle("select.text",
 		// Normal
 		mgStyle(
+			mgTextAlign(MG_START),
 			mgFontSize(TEXT_SIZE),
 			mgTextColor(255,255,255,255)
 		),
@@ -374,6 +375,7 @@ int mgInit()
 	mgCreateStyle("item.text",
 		// Normal
 		mgStyle(
+			mgTextAlign(MG_START),
 			mgFontSize(TEXT_SIZE),
 			mgTextColor(255,255,255,192)
 		),
@@ -420,6 +422,7 @@ int mgInit()
 	mgCreateStyle("number",
 		// Normal
 		mgStyle(
+			mgTextAlign(MG_END),
 			mgFontSize(TEXT_SIZE),
 			mgAlign(MG_START),
 			mgPadding(BUTTON_PADX/2, BUTTON_PADY),
@@ -453,12 +456,28 @@ int mgInit()
 			mgSpacing(LABEL_SPACING),
 			mgTextColor(255,255,255,192)
 		),
-		// Hover
-		mgStyle(),
-		// Active
-		mgStyle(),
-		// Hover
-		mgStyle()
+		// Hover, active, focus
+		mgStyle(), mgStyle(), mgStyle()
+	);
+
+	mgCreateStyle("color",
+		// Normal
+		mgStyle(
+			mgAlign(MG_CENTER),
+			mgSpacing(SPACING)
+		),
+		// Hover, active, focus
+		mgStyle(), mgStyle(), mgStyle()
+	);
+
+	mgCreateStyle("number3",
+		// Normal
+		mgStyle(
+			mgAlign(MG_CENTER),
+			mgSpacing(SPACING)
+		),
+		// Hover, active, focus
+		mgStyle(), mgStyle(), mgStyle()
 	);
 
 	return 1;
@@ -1481,8 +1500,6 @@ struct MGhit* mgBoxBegin(int dir, struct MGstyle style)
 	w->height = MG_AUTO_SIZE;
 	w->dir = dir;
 
-//	printf("box state=%d\n", getState(w));
-
 	w->style = computeStyle(w, mgMergeStyles(mgStyle(mgTag("box")), style));
 
 	pushBox(w);
@@ -1512,8 +1529,17 @@ struct MGhit* mgText(const char* text, struct MGstyle style)
 	w->style = computeStyle(w, mgMergeStyles(mgStyle(mgTag("text")), style));
 
 	textSize(w->text.text, w->style.fontSize, &tw, &th);
-	w->style.width = tw + w->style.paddingx*2;
-	w->style.height = th + w->style.paddingy*2;
+	if (!isStyleSet(&w->style, MG_WIDTH_ARG)) {
+		w->style.width = tw;
+		w->style.set |= 1<<MG_WIDTH_ARG;
+	}
+	if (!isStyleSet(&w->style, MG_HEIGHT_ARG)) {
+		w->style.height = th;
+		w->style.set |= 1<<MG_HEIGHT_ARG;
+	}
+
+	w->style.width += w->style.paddingx*2;
+	w->style.height += w->style.paddingy*2;
 
 	return hitResult(w);
 }
@@ -1522,10 +1548,10 @@ struct MGhit* mgIcon(int width, int height, struct MGstyle style)
 {
 	struct MGwidget* w = allocWidget(MG_ICON);
 
-	w->style = computeStyle(w, mgMergeStyles(mgStyle(mgTag("icon")), style));
+	w->style = computeStyle(w, mgMergeStyles(mgStyle(mgTag("icon"), mgWidth(width), mgWidth(height)), style));
 
-	w->style.width = width + w->style.paddingx*2;
-	w->style.height = height + w->style.paddingy*2;
+	w->style.width += w->style.paddingx*2;
+	w->style.height += w->style.paddingy*2;
 
 	return hitResult(w);
 }
@@ -1541,11 +1567,16 @@ struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGstyle styl
 	struct MGwidget* w = allocWidget(MG_SLIDER);
 	struct MGhit* res = NULL;
 
-	w->style = computeStyle(w, mgMergeStyles(mgStyle(mgTag("slider")), style));
+	w->style = computeStyle(w, mgMergeStyles(mgStyle(mgTag("slider"), mgWidth(DEFAULT_SLIDERW)), style));
 
-	textSize(NULL, w->style.fontSize, &tw,&th);
-	w->style.width = DEFAULT_SLIDERW + w->style.paddingx*2;
-	w->style.height = th + w->style.paddingy*2;
+	if (!isStyleSet(&w->style, MG_HEIGHT_ARG)) {
+		textSize(NULL, w->style.fontSize, &tw,&th);
+		w->style.height = th;
+		w->style.set |= 1<<MG_HEIGHT_ARG;
+	}
+
+	w->style.width += w->style.paddingx*2;
+	w->style.height += w->style.paddingy*2;
 
 	// Logic
 	res = hitResult(w);
@@ -1553,7 +1584,7 @@ struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGstyle styl
 		struct MGsliderState* state = (struct MGsliderState*)res->storage;
 		float xmin = res->bounds[0] + SLIDER_HANDLE/2;
 		float xmax = res->bounds[0]+res->bounds[2] - SLIDER_HANDLE/2;
-		float xrange = maxf(1.0f, xmax - xmin); 
+		float xrange = maxf(1.0f, xmax - xmin);
 		if (res->pressed) {
 			float u = (*value - vmin) / (vmax - vmin);
 			float x = xmin + u * (xmax - xmin);
@@ -1585,18 +1616,13 @@ struct MGhit* mgInput(char* text, int maxtext, struct MGstyle style)
 	w->input.text = allocTextLen(text, maxtext);
 	w->input.maxtext = maxtext;
 
-/*	w->style.spacing = SPACING;
-	w->style.fontSize = TEXT_SIZE;
-	w->style.textAlign = MG_START;
-	w->style.paddingx = BUTTON_PADX/2;
-	w->style.paddingy = BUTTON_PADY;
-	w->style.logic = MG_TYPE;
-	w->style = computeStyle(getState(w), mgMergeStyles(w->style, style));*/
-	w->style = computeStyle(w, mgMergeStyles(mgStyle(mgTag("input")), style));
+	w->style = computeStyle(w, mgMergeStyles(mgStyle(mgTag("input"), mgWidth(DEFAULT_TEXTW)), style));
 
 	textSize(NULL, w->style.fontSize, &tw,&th);
-	w->style.width = DEFAULT_TEXTW + w->style.paddingx*2;
-	w->style.height = th + w->style.paddingy*2;
+	w->style.height = th;
+
+	w->style.width += w->style.paddingx*2;
+	w->style.height += w->style.paddingy*2;
 
 	return hitResult(w);
 }
@@ -1604,51 +1630,30 @@ struct MGhit* mgInput(char* text, int maxtext, struct MGstyle style)
 struct MGhit* mgNumber(float* value, struct MGstyle style)
 {
 	char str[32];
-
 	snprintf(str, sizeof(str), "%.2f", *value);
 	str[sizeof(str)-1] = '\0';
 
-	style = mgMergeStyles(style, mgStyle(mgTag("number"), mgTextAlign(MG_END), mgWidth(DEFAULT_NUMBERW)));
-
-	return mgInput(str, sizeof(str), style);
-/*
-	float tw, th;
-	struct MGwidget* w = allocWidget(MG_NUMBERBOX);
-
-	w->number.value = *value;
-
-	w->style.spacing = SPACING;
-	w->style.fontSize = TEXT_SIZE;
-	w->style.textAlign = MG_END;
-	applyArgs(w, &args);
-
-	textSize(NULL, w->style.fontSize, &tw,&th);
-	w->style.width = DEFAULT_NUMBERW;
-	w->style.height = BUTTON_PADY + th + BUTTON_PADY;
-	return 0;*/
+	return mgInput(str, sizeof(str), mgMergeStyles(mgStyle(mgTag("number"), mgWidth(DEFAULT_NUMBERW)), style));
 }
 
-struct MGhit* mgNumber3(float* x, float* y, float* z, const char* units, struct MGstyle args)
+struct MGhit* mgNumber3(float* x, float* y, float* z, const char* units, struct MGstyle style)
 {
-	struct MGstyle boxArgs = mgMergeStyles(mgStyle(mgAlign(MG_CENTER), mgSpacing(SPACING)), args);
-	mgBoxBegin(MG_ROW, boxArgs);
+	mgBoxBegin(MG_ROW, mgMergeStyles(mgStyle(mgTag("number3")), style));
 		mgNumber(x, mgStyle(mgGrow(1)));
 		mgNumber(y, mgStyle(mgGrow(1)));
 		mgNumber(z, mgStyle(mgGrow(1)));
 		if (units != NULL && strlen(units) > 0)
-			mgText(units, mgStyle(mgFontSize(LABEL_SIZE), mgSpacing(LABEL_SPACING)));
+			mgLabel(units, mgStyle());
 	return mgBoxEnd();
 }
 
-struct MGhit* mgColor(float* r, float* g, float* b, float* a, struct MGstyle args)
+struct MGhit* mgColor(float* r, float* g, float* b, float* a, struct MGstyle style)
 {
-	struct MGstyle boxArgs = mgMergeStyles(mgStyle(mgAlign(MG_CENTER), mgSpacing(SPACING)), args);
-	struct MGstyle labelArgs = mgStyle(mgFontSize(LABEL_SIZE), mgSpacing(LABEL_SPACING));
-	mgBoxBegin(MG_ROW, boxArgs);
-		mgText("R", labelArgs); mgNumber(r, mgStyle(mgGrow(1)));
-		mgText("G", labelArgs); mgNumber(g, mgStyle(mgGrow(1)));
-		mgText("G", labelArgs); mgNumber(b, mgStyle(mgGrow(1)));
-		mgText("A", labelArgs); mgNumber(a, mgStyle(mgGrow(1)));
+	mgBoxBegin(MG_ROW, mgMergeStyles(mgStyle(mgTag("color")), style));
+		mgLabel("R", mgStyle()); mgNumber(r, mgStyle(mgGrow(1)));
+		mgLabel("G", mgStyle()); mgNumber(g, mgStyle(mgGrow(1)));
+		mgLabel("G", mgStyle()); mgNumber(b, mgStyle(mgGrow(1)));
+		mgLabel("A", mgStyle()); mgNumber(a, mgStyle(mgGrow(1)));
 	return mgBoxEnd();
 }
 
@@ -1669,32 +1674,28 @@ struct MGhit* mgCheckBox(const char* text, int* value, struct MGstyle args)
 
 struct MGhit* mgButton(const char* text, struct MGstyle style)
 {
-//	struct MGstyle boxArgs = mgMergeStyles(mgStyle(mgAlign(MG_CENTER), mgSpacing(SPACING), mgPadding(BUTTON_PADX, BUTTON_PADY), mgLogic(MG_CLICK)), args);
 	struct MGhit* ret = mgBoxBegin(MG_ROW, mgMergeStyles(mgStyle(mgTag("button")), style));
-		mgText(text, mgStyle(mgTextAlign(MG_CENTER), mgGrow(1)));
+		mgText(text, mgStyle(mgGrow(1)));
 	mgBoxEnd();
 	return ret;
 }
 
 struct MGhit* mgItem(const char* text, struct MGstyle style)
 {
-//	struct MGstyle boxArgs = mgMergeStyles(mgStyle(mgAlign(MG_CENTER), mgPadding(BUTTON_PADX, BUTTON_PADY), mgLogic(MG_CLICK)), args);
 	mgBoxBegin(MG_ROW, mgMergeStyles(mgStyle(mgTag("item")), style));
-		mgText(text, mgStyle(mgTextAlign(MG_START), mgGrow(1)));
+		mgText(text, mgStyle(mgGrow(1)));
 	return mgBoxEnd();
 }
 
 struct MGhit* mgLabel(const char* text, struct MGstyle style)
 {
-//	struct MGstyle textArgs = mgMergeStyles(mgStyle(mgFontSize(LABEL_SIZE), mgSpacing(LABEL_SPACING), mgTextAlign(MG_START)), args);
 	return mgText(text, mgMergeStyles(mgStyle(mgTag("label")), style));
 }
 
 struct MGhit* mgSelect(int* value, const char** choices, int nchoises, struct MGstyle style)
 {
-//	struct MGstyle boxArgs = mgMergeStyles(mgStyle(mgAlign(MG_CENTER), mgSpacing(SPACING), mgPadding(BUTTON_PADX, BUTTON_PADY), mgLogic(MG_CLICK)), args);
 	mgBoxBegin(MG_ROW, mgMergeStyles(mgStyle(mgTag("select")), style));
-		mgText(choices[*value], mgStyle(mgTextAlign(MG_START), mgGrow(1)));
+		mgText(choices[*value], mgStyle(mgGrow(1)));
 		mgIcon(CHECKBOX_SIZE, CHECKBOX_SIZE, mgStyle());
 	return mgBoxEnd();
 }
