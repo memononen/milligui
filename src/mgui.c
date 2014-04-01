@@ -246,31 +246,64 @@ int mgInit()
 		mgSpacing(SPACING)
 	), mgStyle(), mgStyle(), mgStyle());
 
-	mgCreateStyle("slider", 
+//	mgBoxBegin(MG_ROW, mgMergeStyles(mgStyle(mgTag("slider")), style));
+//	mgBoxBegin(MG_ROW, mgStyle(mgTag("bar"), mgPropWidth(pc*100.0f)));
+
+
+	mgCreateStyle("slider",
 		// Normal
 		mgStyle(
+			mgWidth(DEFAULT_SLIDERW),
 			mgSpacing(SPACING),
-			mgFontSize(TEXT_SIZE),
-			mgPadding(0, BUTTON_PADY),
 			mgLogic(MG_DRAG),
-			mgFillColor(200,200,200,255),
-			mgBorderColor(32,32,32,255),
-			mgBorderSize(1)
+			mgFillColor(255,255,255,24),
+			mgCornerRadius(3)
 		),
 		// Hover
 		mgStyle(
-			mgFillColor(255,255,255,255)
+			mgFillColor(255,255,255,64)
 		),
 		// Active
 		mgStyle(
-			mgFillColor(32,32,32,255),
+			mgFillColor(255,255,255,64)
+		),
+		// Focus
+		mgStyle(
+			mgFillColor(0,192,255,64)
+		)
+	);
+
+	mgCreateStyle("slider.bar", mgStyle(
+		mgHeight(SLIDER_HANDLE),
+		mgFillColor(255,0,0,128),
+		mgCornerRadius(3)
+	), mgStyle(), mgStyle(), mgStyle());
+
+	mgCreateStyle("slider.handle",
+		// Normal
+		mgStyle(
+			mgWidth(SLIDER_HANDLE),
+			mgHeight(SLIDER_HANDLE),
+			mgFillColor(255,255,255,16),
+			mgBorderColor(255,255,255,128),
+			mgBorderSize(1),
+			mgCornerRadius(3)
+		),
+		// Hover
+		mgStyle(
+			mgFillColor(255,255,255,64),
+			mgBorderColor(255,255,255,192)
+		),
+		// Active
+		mgStyle(
+			mgFillColor(255,255,255,192),
 			mgBorderColor(255,255,255,255)
 		),
 		// Focus
 		mgStyle(
-			mgBorderColor(0,192,255,128)
 		)
 	);
+
 
 	mgCreateStyle("button",
 		// Normal
@@ -751,6 +784,9 @@ static void updateLogic(const float* bounds)
 	} else {
 		state.result.bounds[0] = state.result.bounds[1] = state.result.bounds[2] = state.result.bounds[3] = 0;
 	}
+
+	if (active != NULL && active->logic != NULL)
+		active->logic(active->uptr, active, &state.result);
 }
 
 static void drawRect(struct MGwidget* w)
@@ -866,8 +902,8 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 
 		case MG_CANVAS:
 			isectBounds(wbounds, bbounds, w->x, w->y, w->width, w->height);
-			if (w->canvas.render != NULL && wbounds[2] > 0.0f && wbounds[3] > 0.0f) {
-				w->canvas.render(w->canvas.uptr, state.vg, w, wbounds);
+			if (w->render != NULL && wbounds[2] > 0.0f && wbounds[3] > 0.0f) {
+				w->render(w->uptr, w, state.vg, wbounds);
 			}
 			break;
 		}
@@ -950,23 +986,36 @@ static void textSize(const char* str, float size, float* w, float* h)
 static void fitToContent(struct MGwidget* root)
 {
 	struct MGwidget* w = NULL;
+	float width = 0;
+	float height = 0;
 
-	root->style.width = 0;
-	root->style.height = 0;
+//	root->style.width = 0;
+//	root->style.height = 0;
 
 	if (root->dir == MG_COL) {
 		for (w = root->box.children; w != NULL; w = w->next) {
-			root->style.width = maxf(root->style.width, w->style.width);
-			root->style.height += w->style.height;
-			if (w->next != NULL) root->style.height += w->style.spacing;
+			width = maxf(width, w->style.width);
+			height += w->style.height;
+			if (w->next != NULL) height += w->style.spacing;
+		}
+	} else if (root->dir == MG_STACK) {
+		for (w = root->box.children; w != NULL; w = w->next) {
+			width = maxf(width, w->style.width);
+			height = maxf(height, w->style.height);
 		}
 	} else {
 		for (w = root->box.children; w != NULL; w = w->next) {
-			root->style.width += w->style.width;
-			root->style.height = maxf(root->style.height, w->style.height);
-			if (w->next != NULL) root->style.width += w->style.spacing;
+			width += w->style.width;
+			height = maxf(height, w->style.height);
+			if (w->next != NULL) width += w->style.spacing;
 		}
 	}
+
+	if (!isStyleSet(&root->style, MG_WIDTH_ARG) || root->style.width == MG_AUTO_SIZE)
+		root->style.width = width;
+	if (!isStyleSet(&root->style, MG_HEIGHT_ARG) ||root->style.height == MG_AUTO_SIZE)
+		root->style.height = height;
+
 
 	root->style.width += root->style.paddingx*2;
 	root->style.height += root->style.paddingy*2;
@@ -979,10 +1028,12 @@ static void layoutWidgets(struct MGwidget* root)
 	float sum = 0, avail = 0;
 	int ngrow = 0, nitems = 0;
 
-	if (root->width == MG_AUTO_SIZE)
+	if (root->parent == NULL) {
+	//	if (root->width == MG_AUTO_SIZE)
 		root->width = root->style.width;
-	if (root->height == MG_AUTO_SIZE)
+	//	if (root->height == MG_AUTO_SIZE)
 		root->height = root->style.height;
+	}
 
 	x = root->x + root->style.paddingx;
 	y = root->y + root->style.paddingy;
@@ -1003,7 +1054,13 @@ static void layoutWidgets(struct MGwidget* root)
 	if (root->dir == MG_COL) {
 
 		for (w = root->box.children; w != NULL; w = w->next) {
-			sum += w->style.height;
+			w->height = w->style.height;
+			if (isStyleSet(&w->style, MG_PROPHEIGHT_ARG))
+				w->height = clampf(rh * w->style.propHeight / 100.0f, 0, rh);
+		}
+
+		for (w = root->box.children; w != NULL; w = w->next) {
+			sum += w->height;
 			if (w->next != NULL) sum += w->style.spacing;
 			ngrow += w->style.grow;
 			nitems++;
@@ -1016,19 +1073,25 @@ static void layoutWidgets(struct MGwidget* root)
 		for (w = root->box.children; w != NULL; w = w->next) {
 			w->x = x;
 			w->y = y;
-			w->height = w->style.height;
+
 			if (ngrow > 0)
 				w->height += (float)w->style.grow/(float)ngrow * avail;
 			else if (avail < 0)
 				w->height += 1.0f/(float)nitems * avail;
 
 			w->width = minf(rw, w->style.width);
+			if (isStyleSet(&w->style, MG_PROPWIDTH_ARG))
+				w->width = clampf(rw * w->style.propWidth / 100.0f, 0, rw);
+
 			switch (root->style.align) {
 			case MG_END:
 				w->x += rw - w->width;
 				break;
 			case MG_CENTER:
 				w->x += rw/2 - w->width/2;
+				break;
+			case MG_PROP:
+				w->x += (rw - w->width) * root->style.propAlign / 100.0f;
 				break;
 			case MG_JUSTIFY:
 				w->width = rw;
@@ -1043,10 +1106,53 @@ static void layoutWidgets(struct MGwidget* root)
 				layoutWidgets(w);
 		}
 
+	} else if (root->dir == MG_STACK) {
+
+		for (w = root->box.children; w != NULL; w = w->next) {
+			w->width = minf(rw, w->style.width);
+			if (isStyleSet(&w->style, MG_PROPWIDTH_ARG))
+				w->width = clampf(rw * w->style.propWidth / 100.0f, 0, rw);
+			w->height = minf(rh, w->style.height);
+			if (isStyleSet(&w->style, MG_PROPHEIGHT_ARG))
+				w->height = clampf(rh * w->style.propHeight / 100.0f, 0, rh);
+		}
+
+		for (w = root->box.children; w != NULL; w = w->next) {
+			w->x = x;
+			w->y = y;
+
+			switch (root->style.align) {
+			case MG_END:
+				w->x += rw - w->width;
+				break;
+			case MG_CENTER:
+				w->x += rw/2 - w->width/2;
+				break;
+			case MG_PROP:
+				w->x += (rw - w->width) * root->style.propAlign / 100.0f;
+				break;
+			case MG_JUSTIFY:
+				w->width = rw;
+				w->height = rh;
+				break;
+			default: // MG_START
+				break;
+			}
+
+			if (w->type == MG_BOX)
+				layoutWidgets(w);
+		}
+
 	} else {
 
 		for (w = root->box.children; w != NULL; w = w->next) {
-			sum += w->style.width;
+			w->width = w->style.width;
+			if (isStyleSet(&w->style, MG_PROPWIDTH_ARG))
+				w->width = clampf(rw * w->style.propWidth / 100.0f, 0, rw);
+		}
+
+		for (w = root->box.children; w != NULL; w = w->next) {
+			sum += w->width;
 			if (w->next != NULL) sum += w->style.spacing;
 			ngrow += w->style.grow;
 			nitems++;
@@ -1059,19 +1165,24 @@ static void layoutWidgets(struct MGwidget* root)
 		for (w = root->box.children; w != NULL; w = w->next) {
 			w->x = x;
 			w->y = y;
-			w->width = w->style.width;
 			if (ngrow > 0)
 				w->width += (float)w->style.grow/(float)ngrow * avail;
 			else if (avail < 0)
 				w->width += 1.0f/(float)nitems * avail;
 
 			w->height = minf(rh, w->style.height);
+			if (isStyleSet(&w->style, MG_PROPHEIGHT_ARG))
+				w->height = clampf(rh * w->style.propHeight / 100.0f, 0, rh);
+
 			switch (root->style.align) {
 			case MG_END:
 				w->y += rh - w->height;
 				break;
 			case MG_CENTER:
 				w->y += rh/2 - w->height/2;
+				break;
+			case MG_PROP:
+				w->y += (rh - w->height) * root->style.propAlign / 100.0f;
 				break;
 			case MG_JUSTIFY:
 				w->height = rh;
@@ -1133,6 +1244,9 @@ struct MGstyle mgStyle_(unsigned int dummy, ...)
 			case MG_BORDERSIZE_ARG:		style.borderSize = arg.v; break;
 			case MG_CORNERRADIUS_ARG:	style.cornerRadius = arg.v; break;
 			case MG_TAG_ARG:			style.tag = arg.str; break;
+			case MG_PROPWIDTH_ARG:		style.propWidth = arg.v; break;
+			case MG_PROPHEIGHT_ARG:		style.propHeight = arg.v; break;
+			case MG_PROPALIGN_ARG:		style.propAlign = arg.v; break;
 		}
 		// Mark which properties has been set.
 		style.set |= 1 << (arg.arg & 0xff);
@@ -1161,6 +1275,9 @@ struct MGstyle mgMergeStyles(struct MGstyle dst, struct MGstyle src)
 	if (isStyleSet(&src, MG_BORDERSIZE_ARG))	dst.borderSize = src.borderSize;
 	if (isStyleSet(&src, MG_CORNERRADIUS_ARG))	dst.cornerRadius = src.cornerRadius;
 	if (isStyleSet(&src, MG_TAG_ARG))			dst.tag = src.tag;
+	if (isStyleSet(&src, MG_PROPWIDTH_ARG))		dst.propWidth = src.propWidth;
+	if (isStyleSet(&src, MG_PROPHEIGHT_ARG))	dst.propHeight = src.propHeight;
+	if (isStyleSet(&src, MG_PROPALIGN_ARG))		dst.propAlign = src.propAlign;
 	dst.set |= src.set;
 	return dst;
 }
@@ -1338,9 +1455,9 @@ static struct MGnamedStyle* selectStyle(char** path, int npath)
 	if (npath == 0)
 		return NULL;
 
-//	printf("selectStyle(");
-//	dumpPath(path, npath);
-//	printf(")\n");
+/*	printf("selectStyle(");
+	dumpPath(path, npath);
+	printf(")\n");*/
 
 	// Returns longest match
 	for (i = 0; i < stylePoolSize; i++) {
@@ -1350,6 +1467,12 @@ static struct MGnamedStyle* selectStyle(char** path, int npath)
 			smax = &stylePool[i];
 		}
 	}
+
+/*	if (smax != NULL) {
+		printf("  - found: ");
+		dumpPath(smax->path, smax->npath);
+		printf("\n");
+	}*/
 
 	return smax;
 }
@@ -1390,10 +1513,10 @@ struct MGhit* mgPanelBegin(int dir, float x, float y, float width, float height,
 
 	w->x = x;
 	w->y = y;
-	w->width = width;
-	w->height = height;
+//	w->width = width;
+//	w->height = height;
 	w->dir = dir;
-	w->style = computeStyle(getState(w), mgMergeStyles(mgStyle(mgTag("panel")), style));
+	w->style = computeStyle(getState(w), mgMergeStyles(mgStyle(mgWidth(width), mgHeight(height), mgTag("panel")), style));
 
 	addPanel(w);
 	pushId();
@@ -1419,10 +1542,7 @@ struct MGhit* mgBoxBegin(int dir, struct MGstyle style)
 {
 	struct MGwidget* w = allocWidget(MG_BOX);
 
-	w->width = MG_AUTO_SIZE;
-	w->height = MG_AUTO_SIZE;
 	w->dir = dir;
-
 	w->style = computeStyle(getState(w), mgMergeStyles(mgStyle(mgTag("box")), style));
 
 	pushBox(w);
@@ -1479,12 +1599,13 @@ struct MGhit* mgIcon(int width, int height, struct MGstyle style)
 	return hitResult(w);
 }
 
-struct MGhit* mgCanvas(MGcanvasRenderFun cb, void* uptr, struct MGstyle style)
+struct MGhit* mgCanvas(MGcanvasLogicFun logic, MGcanvasRenderFun render, void* uptr, struct MGstyle style)
 {
 	struct MGwidget* w = allocWidget(MG_CANVAS);
 
-	w->canvas.render = cb;
-	w->canvas.uptr = uptr;
+	w->logic = logic;
+	w->render = render;
+	w->uptr = uptr;
 
 	w->style = computeStyle(getState(w), mgMergeStyles(mgStyle(mgTag("canvas")), style));
 
@@ -1496,14 +1617,15 @@ struct MGhit* mgCanvas(MGcanvasRenderFun cb, void* uptr, struct MGstyle style)
 
 struct MGsliderState {
 	float value;
+	float vstart;
 	float vmin, vmax;
 	float hr;
 };
 
-static void drawSlider(void* uptr, struct NVGcontext* vg, struct MGwidget* w, const float* bounds)
+static void sliderDraw(void* uptr, struct MGwidget* w, struct NVGcontext* vg, const float* view)
 {
-	struct MGsliderState* slider = (struct MGsliderState*)uptr;
-	float hr = slider->hr;
+	struct MGsliderState* input = (struct MGsliderState*)uptr;
+	float hr = input->hr;
 	float x;
 
 /*	nvgBeginPath(vg);
@@ -1518,7 +1640,7 @@ static void drawSlider(void* uptr, struct NVGcontext* vg, struct MGwidget* w, co
 	nvgStrokeWidth(vg,1.0f);
 	nvgStroke(vg);
 
-	x = w->x + hr + (slider->value - slider->vmin) / (slider->vmax - slider->vmin) * (w->width - hr*2);
+	x = w->x + hr + (input->value - input->vmin) / (input->vmax - input->vmin) * (w->width - hr*2);
 
 	if (isStyleSet(&w->style, MG_FILLCOLOR_ARG)) {
 		nvgBeginPath(vg);
@@ -1537,13 +1659,84 @@ static void drawSlider(void* uptr, struct NVGcontext* vg, struct MGwidget* w, co
 	}
 }
 
+static void sliderLogic(void* uptr, struct MGwidget* w, struct MGhit* hit)
+{
+	struct MGsliderState* input = (struct MGsliderState*)uptr;
+	struct MGsliderState* output = (struct MGsliderState*)hit->storage;
+	float hr = input->hr;
+	float xmin = w->x + hr;
+	float xmax = w->x + w->width - hr;
+	float xrange = maxf(1.0f, xmax - xmin);
+
+	if (hit->pressed) {
+		float u = (input->value - input->vmin) / (input->vmax - input->vmin);
+		float x = xmin + u * (xmax - xmin);
+		if (hit->mx < (x-hr) || hit->mx > (x+hr)) {
+			// If hit outside the handle, skip there directly.
+			float v = clampf((hit->mx - xmin) / xrange, 0.0f, 1.0f);
+			input->value = clampf(input->vmin + v * (input->vmax - input->vmin), input->vmin, input->vmax);
+		}
+		output->value = input->value;
+		output->vstart = input->value;
+	}
+	if (hit->dragged) {
+		float delta = (hit->deltamx / xrange) * (input->vmax - input->vmin);
+		input->value = clampf(output->vstart + delta, input->vmin, input->vmax);
+		output->value = input->value;
+	}
+
+}
+
 struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGstyle style)
 {
-	float hr = 0;
+	struct MGhit* res = NULL;
+	float pc = (*value - vmin) / (vmax - vmin);
+
+	mgBoxBegin(MG_ROW, mgMergeStyles(mgStyle(mgTag("slider"), mgPropAlign(pc*100.0f)), style));
+//	mgBoxBegin(MG_STACK, mgMergeStyles(mgStyle(mgTag("slider")), style));
+		mgBoxBegin(MG_ROW, mgStyle(mgTag("bar"), mgPropWidth(pc*100.0f)));
+		mgBoxEnd();
+//		mgBoxBegin(MG_ROW, mgStyle(mgTag("handle")));
+//		mgBoxEnd();
+	res = mgBoxEnd();
+
+/*	mgBoxBegin(MG_COL, mgMergeStyles(mgStyle(mgTag("slider"), mgPropAlign(pc*100.0f)), style));
+		mgBoxBegin(MG_ROW, mgStyle(mgTag("bar")));
+		mgBoxEnd();
+	res = mgBoxEnd();*/
+
+/*	mgBoxBegin(MG_ROW, mgMergeStyles(mgStyle(mgTag("slider")), style));
+		mgBoxBegin(MG_ROW, mgStyle(mgTag("bar"), mgPropWidth(pc*100.0f)));
+		mgBoxEnd();
+	res = mgBoxEnd();*/
+
+	if (res != NULL) {
+		struct MGsliderState* state = (struct MGsliderState*)res->storage;
+		float xmin = res->bounds[0];
+		float xmax = res->bounds[0] + res->bounds[2];
+		float xrange = maxf(1.0f, xmax - xmin);
+		if (res->pressed) {
+			float u = (*value - vmin) / (vmax - vmin);
+			float x = xmin + u * (xmax - xmin);
+			if (res->mx < (x-10) || res->mx > (x+10)) {
+				// If hit outside the handle, skip there directly.
+				float v = clampf((res->mx - xmin) / xrange, 0.0f, 1.0f);
+				*value = clampf(vmin + v * (vmax - vmin), vmin, vmax);
+			}
+			state->value = *value;
+		}
+		if (res->dragged) {
+			float delta = (res->deltamx / xrange) * (vmax - vmin);
+			*value = clampf(state->value + delta, vmin, vmax);
+		}
+	}
+
+
+/*	float hr = 0;
 	struct MGhit* res = NULL;
 	struct MGstyle comp;
-	struct MGsliderState* slider = (struct MGsliderState*)mgTempMalloc(sizeof(struct MGsliderState));
-	if (slider == NULL)
+	struct MGsliderState* input = (struct MGsliderState*)mgTempMalloc(sizeof(struct MGsliderState));
+	if (input == NULL)
 		return NULL;
 
 	style = mgMergeStyles(mgStyle(mgTag("slider"), mgWidth(DEFAULT_SLIDERW)), style);
@@ -1556,12 +1749,22 @@ struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGstyle styl
 		style.set |= 1<<MG_HEIGHT_ARG;
 	}
 
-	res = mgCanvas(drawSlider, slider, style);
+	input->value = *value;
+	input->vmin = vmin;
+	input->vmax = vmax;
+	input->hr = style.height / 2;
 
-	hr = style.height / 2;
+	res = mgCanvas(sliderLogic, sliderDraw, input, style);
+
+	if (res != NULL) {
+		struct MGsliderState* output = (struct MGsliderState*)res->storage;
+		*value = output->value;
+	}*/
+
+
 
 	// Logic
-	if (res != NULL) {
+/*	if (res != NULL) {
 		struct MGsliderState* state = (struct MGsliderState*)res->storage;
 		float xmin = res->bounds[0] + hr;
 		float xmax = res->bounds[0]+res->bounds[2] - hr;
@@ -1580,12 +1783,7 @@ struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGstyle styl
 			float delta = (res->deltamx / xrange) * (vmax - vmin);
 			*value = clampf(state->value + delta, vmin, vmax);
 		}
-	}
-
-	slider->value = *value;
-	slider->vmin = vmin;
-	slider->vmax = vmax;
-	slider->hr = hr;
+	}*/
 
 	return res;
 }
@@ -1634,7 +1832,7 @@ struct MGhit* mgColor(float* r, float* g, float* b, float* a, struct MGstyle sty
 	mgBoxBegin(MG_ROW, mgMergeStyles(mgStyle(mgTag("color")), style));
 		mgLabel("R", mgStyle()); mgNumber(r, mgStyle(mgGrow(1)));
 		mgLabel("G", mgStyle()); mgNumber(g, mgStyle(mgGrow(1)));
-		mgLabel("G", mgStyle()); mgNumber(b, mgStyle(mgGrow(1)));
+		mgLabel("B", mgStyle()); mgNumber(b, mgStyle(mgGrow(1)));
 		mgLabel("A", mgStyle()); mgNumber(a, mgStyle(mgGrow(1)));
 	return mgBoxEnd();
 }

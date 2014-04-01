@@ -20,6 +20,7 @@ enum MUIoverflow {
 enum MUIdir {
 	MG_ROW,
 	MG_COL,
+	MG_STACK,
 };
 
 enum MUIalign {
@@ -27,6 +28,7 @@ enum MUIalign {
 	MG_END,
 	MG_CENTER,
 	MG_JUSTIFY,
+	MG_PROP,
 };
 
 #define MG_AUTO_SIZE 0xffff
@@ -35,11 +37,14 @@ enum MGargTypes {
 	MG_NONE = 0,
 	MG_WIDTH_ARG,
 	MG_HEIGHT_ARG,
+	MG_PROPWIDTH_ARG,
+	MG_PROPHEIGHT_ARG,
 	MG_SPACING_ARG,
 	MG_PADDINGX_ARG,
 	MG_PADDINGY_ARG,
 	MG_GROW_ARG,
 	MG_ALIGN_ARG,
+	MG_PROPALIGN_ARG,
 	MG_OVERFLOW_ARG,
 	MG_FONTSIZE_ARG,
 	MG_TEXTALIGN_ARG,
@@ -70,9 +75,12 @@ struct MGarg {
 
 #define mgOverflow(v)			(mgPackArg(MG_OVERFLOW_ARG, (v)))
 #define mgAlign(v)				(mgPackArg(MG_ALIGN_ARG, (v)))
+#define mgPropAlign(v)			(mgPackArg(MG_ALIGN_ARG, MG_PROP)), (mgPackArg(MG_PROPALIGN_ARG, (v)))
 #define mgGrow(v)				(mgPackArg(MG_GROW_ARG, (v)))
 #define mgWidth(v)				(mgPackArg(MG_WIDTH_ARG, (v)))
 #define mgHeight(v)				(mgPackArg(MG_HEIGHT_ARG, (v)))
+#define mgPropWidth(v)			(mgPackArg(MG_PROPWIDTH_ARG, (v)))
+#define mgPropHeight(v)			(mgPackArg(MG_PROPHEIGHT_ARG, (v)))
 #define mgPaddingX(v)			(mgPackArg(MG_PADDINGX_ARG, (v)))
 #define mgPaddingY(v)			(mgPackArg(MG_PADDINGY_ARG, (v)))
 #define mgPadding(x,y)			(mgPackArg(MG_PADDINGX_ARG, (x))), (mgPackArg(MG_PADDINGY_ARG, (y)))
@@ -105,6 +113,9 @@ struct MGstyle {
 	unsigned char logic;
 	unsigned char cornerRadius;
 	unsigned char borderSize;
+	unsigned short propWidth;
+	unsigned short propHeight;
+	unsigned short propAlign;
 	const char* tag;
 };
 
@@ -146,7 +157,10 @@ enum MGwidgetState {
 	MG_FOCUS = 1<<2,
 };
 
-typedef void (*MGcanvasRenderFun)(void* uptr, struct NVGcontext* vg, struct MGwidget* w, const float* bounds);
+struct MGwidget;
+
+typedef void (*MGcanvasRenderFun)(void* uptr, struct MGwidget* w, struct NVGcontext* vg, const float* view);
+typedef void (*MGcanvasLogicFun)(void* uptr, struct MGwidget* w, struct MGhit* hit);
 
 struct MGwidget {
 	unsigned int id;
@@ -167,11 +181,12 @@ struct MGwidget {
 		struct {
 			struct MGwidget* children;
 		} box;
-		struct {
-			MGcanvasRenderFun render;
-			void* uptr;
-		} canvas;
 	};
+
+	MGcanvasLogicFun logic;
+	MGcanvasRenderFun render;
+	void* uptr;
+
 	struct MGwidget* next;
 	struct MGwidget* parent;
 };
@@ -190,7 +205,7 @@ struct MGhit* mgIcon(int width, int height, struct MGstyle args);
 struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGstyle args);
 struct MGhit* mgInput(char* text, int maxtext, struct MGstyle args);
 
-struct MGhit* mgCanvas(MGcanvasRenderFun cb, void* uptr, struct MGstyle args);
+struct MGhit* mgCanvas(MGcanvasLogicFun logic, MGcanvasRenderFun render, void* uptr, struct MGstyle args);
 
 // Derivative
 struct MGhit* mgNumber(float* value, struct MGstyle args);
