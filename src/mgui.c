@@ -323,6 +323,52 @@ int mgInit()
 	);
 
 
+	mgCreateStyle("progress",
+		// Normal
+		mgStyle(
+			mgWidth(DEFAULT_SLIDERW),
+			mgHeight(SLIDER_HANDLE+2),
+			mgSpacing(SPACING),
+			mgFillColor(0,0,0,128),
+			mgPadding(2,2),
+			mgCornerRadius(4)
+		),
+		mgStyle(), mgStyle(), mgStyle()
+	);
+	mgCreateStyle("progress.bar", mgStyle(
+		mgPropHeight(1.0f),
+		mgFillColor(0,192,255,255),
+		mgPaddingX(2),
+		mgCornerRadius(2)
+	), mgStyle(), mgStyle(), mgStyle());
+
+	mgCreateStyle("scroll",
+		// Normal
+		mgStyle(
+			mgWidth(DEFAULT_SLIDERW),
+			mgHeight(10),
+			mgSpacing(SPACING),
+			mgFillColor(255,255,255,24),
+			mgCornerRadius(4)
+		),
+		mgStyle(), mgStyle(), mgStyle()
+	);
+	mgCreateStyle("scroll.bar",
+		mgStyle(
+			mgPropHeight(1.0f),
+			mgFillColor(0,0,0,64),
+			mgPaddingX(4),
+			mgCornerRadius(4)
+		),
+		mgStyle(
+			mgFillColor(0,0,0,128)
+		),
+		mgStyle(
+			mgFillColor(0,0,0,192)
+		),
+		mgStyle()
+	);
+
 	mgCreateStyle("button",
 		// Normal
 		mgStyle(
@@ -613,9 +659,13 @@ static struct MGwidget* hitTest(struct MGwidget* box, const float* bounds)
 	struct MGwidget* hit = NULL;
 	struct MGwidget* child = NULL;
 
+	// TODO: something not quite right with MG_VISIBLE, we should clip some bit of the bounds, but
+	// not immediate parent.
+
 	// calc box bounds
 	if (box->style.overflow == MG_VISIBLE) {
-		bbounds[0] = bounds[0]; bbounds[1] = bounds[1]; bbounds[2] = bounds[2]; bbounds[3] = bounds[3];
+//		bbounds[0] = bounds[0]; bbounds[1] = bounds[1]; bbounds[2] = bounds[2]; bbounds[3] = bounds[3];
+		bbounds[0] = box->x; bbounds[1] = box->y; bbounds[2] = box->width; bbounds[3] = box->height;
 	} else {
 		isectBounds(bbounds, bounds, box->x, box->y, box->width, box->height);
 	}
@@ -1828,6 +1878,72 @@ struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGstyle styl
 		if (res->dragged) {
 			float delta = (res->deltamx / xrange) * (vmax - vmin);
 			*value = clampf(state->value + delta, vmin, vmax);
+		}
+		return res;
+	}
+
+	return NULL;
+}
+
+struct MGhit* mgProgress(float progress, struct MGstyle style)
+{
+	float pc = clampf(progress, 0.0f, 1.0f);	
+	mgBoxBegin(MG_ROW, mgMergeStyles(mgStyle(mgTag("progress")), style));
+		mgBoxBegin(MG_ROW, mgStyle(mgRelative(MG_START,MG_JUSTIFY,0,0.5f), mgAlign(MG_CENTER), mgOverflow(MG_VISIBLE), mgTag("bar"), mgPropWidth(pc)));
+		mgBoxEnd();
+	return mgBoxEnd();
+}
+
+struct MGhit* mgScrollBar(float* offset, float contentSize, float viewSize, struct MGstyle style)
+{
+	struct MGhit* res = NULL;
+	struct MGhit* hres = NULL;
+	float slack = maxf(0, contentSize - viewSize);
+	float oc = minf(1.0f, *offset / maxf(1.0f, slack));
+	float pc = minf(1.0f, viewSize / maxf(1.0f, contentSize));
+
+	mgBoxBegin(MG_ROW, mgMergeStyles(mgStyle(mgLogic(MG_DRAG), mgTag("scroll")), style));
+		mgBoxBegin(MG_ROW, mgStyle(mgLogic(MG_DRAG), mgRelative(MG_JUSTIFY,MG_JUSTIFY,oc,0.5f), mgTag("bar"), mgPropWidth(pc)));
+		hres = mgBoxEnd();
+	res = mgBoxEnd();
+
+	if (hres != NULL) {
+		// Drag slider to scroll
+		struct MGsliderState* state = (struct MGsliderState*)hres->storage;
+		float xmin = hres->pbounds[0];
+		float xmax = hres->pbounds[0] + hres->pbounds[2];
+		float xrange = maxf(1.0f, xmax - xmin);
+		if (hres->pressed) {
+			state->value = *offset;
+		}
+		if (hres->dragged && pc < 1.0f) {
+			float delta = (hres->deltamx / xrange) * slack / (1-pc);
+			*offset = clampf(state->value + delta, 0, slack);
+		}
+		return hres;
+	}
+
+	if (res != NULL) {
+		// Click on the BG will jump a page worth forw/back
+		struct MGsliderState* state = (struct MGsliderState*)res->storage;
+		float delay = 0.75f;
+		float delay2 = 0.05f;
+		float xmin = res->bounds[0];
+		float xmax = res->bounds[0] + res->bounds[2];
+		float xrange = maxf(1.0f, xmax - xmin);
+		float hmin = xmin + xrange * oc * (1-pc);
+		float hmax = hmin + xrange * pc;
+		if (res->pressed) {
+			state->value = 0;
+		}
+		state->value += 1.0f/ 60.0f; // todo, make this timer.
+		if (res->pressed || (res->dragged && state->value > delay)) {
+			if (res->mx < hmin)
+				*offset = clampf(*offset - pc * contentSize, 0, slack);
+			else if (res->mx > hmax)
+				*offset = clampf(*offset + pc * contentSize, 0, slack);
+			if (!res->pressed)
+				state->value = delay-delay2;
 		}
 		return res;
 	}

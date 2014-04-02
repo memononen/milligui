@@ -53,6 +53,8 @@ static void mousebutton(GLFWwindow* window, int button, int action, int mods)
 	}
 }
 
+static float sqr(float x) { return x*x; }
+
 int main()
 {
 	GLFWwindow* window;
@@ -66,6 +68,7 @@ int main()
 	int cull = 1;
 	char name[64] = "Mikko";
 	const char* choices[] = { "Normal", "Minimum Color", "Screen Door", "Maximum Velocity" };
+	float scroll = 30;
 
 	printf("start\n");
 
@@ -198,6 +201,11 @@ int main()
 			printf("Build!!\n");
 		}
 
+		mgProgress(sqr(sinf(glfwGetTime()*0.3f)), mgStyle());
+
+//		scroll = (200 - 45) * sqr(sinf(glfwGetTime()*0.3f));
+		mgScrollBar(&scroll, 200, 45, mgStyle());
+
 		mgBoxBegin(MG_ROW, mgStyle());
 			mgBoxBegin(MG_COL, mgStyle(mgGrow(1), mgAlign(MG_JUSTIFY)));
 				mgButton("Build1", mgStyle());
@@ -206,6 +214,7 @@ int main()
 			mgBoxEnd();
 			mgButton("Build4", mgStyle());
 		mgBoxEnd();
+
 
 		mgPanelEnd();
 

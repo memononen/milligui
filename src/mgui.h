@@ -101,9 +101,9 @@ struct MGarg {
 #define mgFontSize(v)			(mgPackArg(MG_FONTSIZE_ARG, (v)))
 #define mgTextAlign(v)			(mgPackArg(MG_TEXTALIGN_ARG, (v)))
 #define mgLogic(v)				(mgPackArg(MG_LOGIC_ARG, (v)))
-#define mgContentColor(r,g,b,a)	(mgPackArg(MG_CONTENTCOLOR_ARG, mgRGBA((r),(b),(b),(a))))
-#define mgFillColor(r,g,b,a)	(mgPackArg(MG_FILLCOLOR_ARG, mgRGBA((r),(b),(b),(a))))
-#define mgBorderColor(r,g,b,a)	(mgPackArg(MG_BORDERCOLOR_ARG, mgRGBA((r),(b),(b),(a))))
+#define mgContentColor(r,g,b,a)	(mgPackArg(MG_CONTENTCOLOR_ARG, mgRGBA((r),(g),(b),(a))))
+#define mgFillColor(r,g,b,a)	(mgPackArg(MG_FILLCOLOR_ARG, mgRGBA((r),(g),(b),(a))))
+#define mgBorderColor(r,g,b,a)	(mgPackArg(MG_BORDERCOLOR_ARG, mgRGBA((r),(g),(b),(a))))
 #define mgBorderSize(v)			(mgPackArg(MG_BORDERSIZE_ARG, (v)))
 #define mgCornerRadius(v)		(mgPackArg(MG_CORNERRADIUS_ARG, (v)))
 #define mgTag(v)				(mgPackStrArg(MG_TAG_ARG, (v)))
@@ -195,7 +195,6 @@ struct MGwidget {
 		struct {
 			char* text;
 			int maxtext;
-			float value;
 		} input;
 		struct {
 			struct MGwidget* children;
@@ -221,7 +220,6 @@ struct MGhit* mgBoxEnd();
 
 struct MGhit* mgText(const char* text, struct MGstyle args);
 struct MGhit* mgIcon(int width, int height, struct MGstyle args);
-struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGstyle args);
 struct MGhit* mgInput(char* text, int maxtext, struct MGstyle args);
 
 struct MGhit* mgCanvas(MGcanvasLogicFun logic, MGcanvasRenderFun render, void* uptr, struct MGstyle args);
@@ -235,6 +233,9 @@ struct MGhit* mgColor(float* r, float* g, float* b, float* a, struct MGstyle arg
 struct MGhit* mgCheckBox(const char* text, int* value, struct MGstyle args);
 struct MGhit* mgButton(const char* text, struct MGstyle args);
 struct MGhit* mgItem(const char* text, struct MGstyle args);
+struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGstyle args);
+struct MGhit* mgProgress(float progress, struct MGstyle args);
+struct MGhit* mgScrollBar(float* offset, float contentSize, float viewSize, struct MGstyle args);
 
 
 #endif // MGUI_H
