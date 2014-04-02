@@ -21,7 +21,6 @@ enum MUIoverflow {
 enum MUIdir {
 	MG_ROW,
 	MG_COL,
-	MG_STACK,
 };
 
 enum MUIalign {
@@ -29,7 +28,6 @@ enum MUIalign {
 	MG_END,
 	MG_CENTER,
 	MG_JUSTIFY,
-	MG_PROP,
 };
 
 #define MG_AUTO_SIZE 0xffff
@@ -45,8 +43,7 @@ enum MGargTypes {
 	MG_PADDINGY_ARG,
 	MG_GROW_ARG,
 	MG_ALIGN_ARG,
-	MG_PROPALIGN_ARG,		// 10
-	MG_OVERFLOW_ARG,
+	MG_OVERFLOW_ARG,		// 10
 	MG_FONTSIZE_ARG,
 	MG_TEXTALIGN_ARG,
 	MG_LOGIC_ARG,
@@ -55,9 +52,11 @@ enum MGargTypes {
 	MG_FILLCOLOR_ARG,
 	MG_BORDERCOLOR_ARG,
 	MG_BORDERSIZE_ARG,
-	MG_CORNERRADIUS_ARG,	// 20
-	MG_TAG_ARG,
+	MG_CORNERRADIUS_ARG,
+	MG_TAG_ARG,				// 20
 	MG_RELATIVE_ARG,
+	MG_RELATIVEX_ARG,
+	MG_RELATIVEY_ARG,
 };
 
 enum MGanchor {
@@ -90,7 +89,6 @@ struct MGarg {
 
 #define mgOverflow(v)			(mgPackArg(MG_OVERFLOW_ARG, (v)))
 #define mgAlign(v)				(mgPackArg(MG_ALIGN_ARG, (v)))
-#define mgPropAlign(v)			(mgPackArg(MG_ALIGN_ARG, MG_PROP)), (mgPackArgf(MG_PROPALIGN_ARG, (v)))
 #define mgGrow(v)				(mgPackArg(MG_GROW_ARG, (v)))
 #define mgWidth(v)				(mgPackArg(MG_WIDTH_ARG, (v)))
 #define mgHeight(v)				(mgPackArg(MG_HEIGHT_ARG, (v)))
@@ -109,7 +107,7 @@ struct MGarg {
 #define mgBorderSize(v)			(mgPackArg(MG_BORDERSIZE_ARG, (v)))
 #define mgCornerRadius(v)		(mgPackArg(MG_CORNERRADIUS_ARG, (v)))
 #define mgTag(v)				(mgPackStrArg(MG_TAG_ARG, (v)))
-#define mgRelative(x,y)			(mgPackArg2(MG_RELATIVE_ARG, (x), (y)))
+#define mgRelative(a,b,x,y)		(mgPackArg2(MG_RELATIVE_ARG, (a), (b))), (mgPackArgf(MG_RELATIVEX_ARG, (x))), (mgPackArgf(MG_RELATIVEY_ARG, (y)))
 
 struct MGstyle {
 	unsigned int set;
@@ -120,7 +118,6 @@ struct MGstyle {
 	unsigned short height;
 	unsigned short propWidth;
 	unsigned short propHeight;
-	unsigned short propAlign;
 	unsigned char spacing;
 	unsigned char paddingx;
 	unsigned char paddingy;
@@ -133,6 +130,8 @@ struct MGstyle {
 	unsigned char cornerRadius;
 	unsigned char borderSize;
 	unsigned char relative;
+	unsigned short relativex;
+	unsigned short relativey;
 	const char* tag;
 };
 
@@ -158,6 +157,7 @@ struct MGhit {
 	float deltamx, deltamy;
 	float localmx, localmy;
 	float bounds[4];
+	float pbounds[4];
 	unsigned char storage[128];
 };
 
