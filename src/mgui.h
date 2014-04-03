@@ -59,19 +59,6 @@ enum MGargTypes {
 	MG_RELATIVEY_ARG,
 };
 
-enum MGanchor {
-	MG_ANCHOR_NONE = 0,
-	MG_ANCHOR_N,
-	MG_ANCHOR_NE,
-	MG_ANCHOR_E,
-	MG_ANCHOR_SE,
-	MG_ANCHOR_S,
-	MG_ANCHOR_SW,
-	MG_ANCHOR_W,
-	MG_ANCHOR_NW,
-	MG_ANCHOR_CENTER,
-};
-
 enum MGlogic {
 	MG_CLICK = 1,
 	MG_DRAG = 2,
@@ -188,6 +175,7 @@ struct MGwidget {
 	unsigned char dir;
 	unsigned char type;
 	unsigned char state;
+	unsigned char active;
 	union {
 		struct {
 			char* text;
@@ -212,7 +200,7 @@ struct MGwidget {
 void mgFrameBegin(struct NVGcontext* vg, int width, int height, int mx, int my, int mbut);
 void mgFrameEnd();
 
-struct MGhit* mgPanelBegin(int dir, float x, float y, float width, float height, struct MGstyle args);
+struct MGhit* mgPanelBegin(int dir, float x, float y, int zidx, struct MGstyle args);
 struct MGhit* mgPanelEnd();
 
 struct MGhit* mgBoxBegin(int dir, struct MGstyle args);
@@ -236,6 +224,9 @@ struct MGhit* mgItem(const char* text, struct MGstyle args);
 struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGstyle args);
 struct MGhit* mgProgress(float progress, struct MGstyle args);
 struct MGhit* mgScrollBar(float* offset, float contentSize, float viewSize, struct MGstyle args);
+
+struct MGhit* mgPopupBegin(struct MGhit* hit, int dir, struct MGstyle args);
+struct MGhit* mgPopupEnd();
 
 
 #endif // MGUI_H

@@ -95,6 +95,17 @@ static int isStyleSet(struct MGstyle* style, unsigned int f)
 #define MG_ID_STACK_SIZE 100
 #define MG_MAX_PANELS 100
 #define MG_MAX_TAGS 100
+#define MG_MAX_TRANSIENTS 100
+
+struct MGtransient {
+	unsigned int id;
+	int counter;
+	unsigned char storage[128];
+};
+
+struct MGidRange {
+	unsigned int base, count;
+};
 
 struct MUIstate
 {
@@ -117,14 +128,19 @@ struct MUIstate
 	struct MGwidget* boxStack[MG_BOX_STACK_SIZE];
 	int boxStackCount;
 
-	int idStack[MG_ID_STACK_SIZE];
+	struct MGidRange idStack[MG_ID_STACK_SIZE];
 	int idStackCount;
 
+	struct MGwidget* previous;
 	struct MGwidget* panels[MG_MAX_PANELS];
+	int panelsz[MG_MAX_PANELS];
 	int panelCount;
 
 	const char* tags[MG_MAX_TAGS];
 	int tagCount;
+
+	struct MGtransient transients[MG_MAX_TRANSIENTS];
+	int transientCount;
 
 	struct NVGcontext* vg;
 
@@ -135,10 +151,45 @@ struct MUIstate
 
 static struct MUIstate state;
 
-static void addPanel(struct MGwidget* w)
+static unsigned char* allocTransient(unsigned int id, int size)
 {
-	if (state.panelCount < MG_MAX_PANELS)
-		state.panels[state.panelCount++] = w;
+	int i;
+	struct MGtransient* trans;
+	if (size > 128) {
+		printf("too large transient size %d\n", size);
+		return NULL;
+	}
+	// Check if the transient exists.
+	for (i = 0; i < state.transientCount; i++) {
+		if (state.transients[i].id == id) {
+			state.transients[i].counter++;
+			return state.transients[i].storage;
+		}
+	}
+	// Could not found, add new.
+	if (state.transientCount >= MG_MAX_TRANSIENTS)
+		return NULL;
+	trans = &state.transients[state.transientCount++];
+	memset(trans, 0, sizeof(*trans));
+	trans->id = id;
+	trans->counter = 1;
+	return trans->storage;
+}
+
+static void addPanel(struct MGwidget* w, int zidx)
+{
+	if (state.panelCount < MG_MAX_PANELS) {
+		int i, z = zidx + state.panelCount, idx = 0;
+		while (idx < state.panelCount && state.panelsz[idx] < z)
+			idx++;
+		for (i = state.panelCount; i >= idx; i--) {
+			state.panels[i] = state.panels[i-1];
+			state.panelsz[i] = state.panelsz[i-1];
+		}
+		state.panels[idx] = w;
+		state.panelsz[idx] = z;
+		state.panelCount++;
+	}
 }
 
 static void pushBox(struct MGwidget* w)
@@ -154,16 +205,20 @@ static struct MGwidget* popBox()
 	return NULL;
 }
 
-static void pushId()
+static void pushId(int base)
 {
-	if (state.idStackCount < MG_ID_STACK_SIZE)
-		state.idStack[state.idStackCount++] = 0;
+	if (state.idStackCount+1 < MG_ID_STACK_SIZE) {
+		state.idStack[state.idStackCount].base = base;
+		state.idStack[state.idStackCount].count = 0;
+		state.idStackCount++;
+	}
 }
 
 static void popId()
 {
-	if (state.idStackCount > 0)
+	if (state.idStackCount > 0) {
 		state.idStackCount--;
+	}
 }
 
 static void pushTag(const char* tag)
@@ -188,10 +243,10 @@ static int genId()
 {
 	unsigned int id = 0;
 	if (state.idStackCount > 0) {
-		state.idStack[state.idStackCount-1]++;
-		id |= (state.idStack[0] << 16);
-		if (state.idStackCount > 1)
-			id |= state.idStack[state.idStackCount-1];
+		int idx = state.idStackCount-1;
+		id |= state.idStack[idx].base << 16;
+		id |= state.idStack[idx].count;
+		state.idStack[idx].count++;
 	}
 	return id;
 }
@@ -209,7 +264,6 @@ static void addChildren(struct MGwidget* parent, struct MGwidget* w)
 
 static struct MGwidget* allocWidget(int type)
 {
-	struct MGwidget* parent = getParent();
 	struct MGwidget* w = NULL;
 	if (widgetPoolSize+1 > MG_WIDGET_POOL_SIZE)
 		return NULL;
@@ -217,7 +271,7 @@ static struct MGwidget* allocWidget(int type)
 	memset(w, 0, sizeof(*w));
 	w->id = genId();
 	w->type = type;
-	addChildren(parent, w);
+	w->active = 1;
 	return w;
 }
 
@@ -591,6 +645,16 @@ int mgInit()
 		mgStyle(), mgStyle(), mgStyle()
 	);
 
+	mgCreateStyle("popup",
+		// Normal
+		mgStyle(
+			mgLogic(MG_CLICK),
+			mgFillColor(32,32,32,192)
+		),
+		// Hover, active, focus
+		mgStyle(), mgStyle(), mgStyle()
+	);
+
 	return 1;
 }
 
@@ -621,9 +685,11 @@ void mgFrameBegin(struct NVGcontext* vg, int width, int height, int mx, int my, 
 	state.panelCount = 0;
 	state.tagCount = 0;
 
-
 	state.idStackCount = 1;
-	state.idStack[0] = 0;
+	state.idStack[0].base = 0;
+	state.idStack[0].count = 0;
+
+	state.previous = NULL;
 
 	tempPoolSize = 0;
 	textPoolSize = 0;
@@ -752,9 +818,9 @@ static struct MGwidget* updateState(struct MGwidget* box, unsigned int hover, un
 /*
 static void dumpId(struct MGwidget* box, int indent)
 {
-	struct MGwidget* w;
-	printf("%*sbox %d\n", indent, "", w->id);
-	for (w = w->box.children; w != NULL; w = w->next) {
+	struct MGwidget* w = NULL;
+	printf("%*sbox %d\n", indent, "", box->id);
+	for (w = box->box.children; w != NULL; w = w->next) {
 		if  (w->type == MG_BOX)
 			dumpId(w, indent+2);
 		else
@@ -770,13 +836,16 @@ static void updateLogic(const float* bounds)
 	struct MGwidget* active = NULL;
 	int deactivate = 0;
 
-//	for (i = 0; i < state.panelCount; i++)
-//		dumpId(state.panels[i], 0);
+/*	printf("---\n");
+	for (i = 0; i < state.panelCount; i++)
+		dumpId(state.panels[i], 0);*/
 
 	for (i = 0; i < state.panelCount; i++) {
-		struct MGwidget* child = hitTest(state.panels[i], bounds);
-		if (child != NULL)
-			hit = child;
+		if (state.panels[i]->active) {
+			struct MGwidget* child = hitTest(state.panels[i], bounds);
+			if (child != NULL)
+				hit = child;
+		}
 	}
 
 	state.hover = 0;
@@ -1049,8 +1118,24 @@ static void drawPanels(const float* bounds)
 {
 	int i;
 	if (state.vg == NULL) return;	
-	for (i = 0; i < state.panelCount; i++)
-		drawBox(state.panels[i], bounds);
+	for (i = 0; i < state.panelCount; i++) {
+		if (state.panels[i]->active)
+			drawBox(state.panels[i], bounds);
+	}
+}
+
+static void cleanUpTransients()
+{
+	int i, n = 0;
+	for (i = 0; i < state.transientCount; i++) {
+		state.transients[i].counter--;
+		if (state.transients[i].counter >= 0) {
+			if (n < i)
+				state.transients[n] = state.transients[i];
+			n++;
+		}
+	}
+	state.transientCount = n;
 }
 
 void mgFrameEnd()
@@ -1058,6 +1143,9 @@ void mgFrameEnd()
 	float bounds[4] = {0, 0, state.width, state.height};
 	updateLogic(bounds);
 	drawPanels(bounds);
+
+	// clean up transients
+	cleanUpTransients();
 }
 
 static void textSize(const char* str, float size, float* w, float* h)
@@ -1108,21 +1196,6 @@ static void fitToContent(struct MGwidget* root)
 
 	root->style.width += root->style.paddingx*2;
 	root->style.height += root->style.paddingy*2;
-}
-
-static void getAnchor(float* x, float* y, unsigned char dir, float w, float h)
-{
-	switch(dir) {
-	case MG_ANCHOR_N:		*x = w/2;	*y = 0; break;
-	case MG_ANCHOR_NE:		*x = w;		*y = 0; break;
-	case MG_ANCHOR_E:		*x = w;		*y = h/2; break;
-	case MG_ANCHOR_SE:		*x = w;		*y = h; break;
-	case MG_ANCHOR_S:		*x = w/2;	*y = h/2; break;
-	case MG_ANCHOR_SW:		*x = 0;		*y = h; break;
-	case MG_ANCHOR_W:		*x = 0;		*y = h/2; break;
-	case MG_ANCHOR_NW:		*x = 0;		*y = 0; break;
-	case MG_ANCHOR_CENTER:	*x = w/2;	*y = h/2; break;
-	}
 }
 
 static float calcRelativeDelta(unsigned char align, float u, float psize, float wsize)
@@ -1540,7 +1613,11 @@ static int matchStyle(struct MGnamedStyle* style, char** path, int npath)
 		b--;
 	}
 
-//	printf(" - succeed\n");
+/*	printf(" - match n=%d sel=", n);
+	dumpPath(style->path, style->npath);
+	printf("  path=");
+	dumpPath(path, npath);
+	printf(" - succeed\n");*/
 
 	return n;
 }
@@ -1605,40 +1682,50 @@ static struct MGstyle computeStyle(unsigned char wstate, struct MGstyle style)
 	return style;
 }
 
-struct MGhit* mgPanelBegin(int dir, float x, float y, float width, float height, struct MGstyle style)
+struct MGhit* mgPanelBegin(int dir, float x, float y, int zidx, struct MGstyle style)
 {
-	struct MGwidget* w = allocWidget(MG_BOX);
+	struct MGwidget* w = NULL;
 
+	pushId(state.panelCount+1);
+
+	w = allocWidget(MG_BOX);
 	w->x = x;
 	w->y = y;
-//	w->width = width;
-//	w->height = height;
 	w->dir = dir;
-	w->style = computeStyle(getState(w), mgMergeStyles(mgStyle(mgWidth(width), mgHeight(height), mgTag("panel")), style));
+	w->style = computeStyle(getState(w), mgMergeStyles(mgStyle(mgTag("panel")), style));
+	state.previous = w;
 
-	addPanel(w);
-	pushId();
 	pushBox(w);
 	pushTag(w->style.tag);
+
+	addPanel(w, zidx);
+
 
 	return hitResult(w);
 }
 
 struct MGhit* mgPanelEnd()
 {
+	popId();
+
+	popTag();
 	struct MGwidget* w = popBox();
 	if (w != NULL) {
 		fitToContent(w);
 		layoutWidgets(w);
+		state.previous = w;
 	}
-	popId();
-	popTag();
+
 	return hitResult(w);
 }
 
 struct MGhit* mgBoxBegin(int dir, struct MGstyle style)
 {
+	struct MGwidget* parent = getParent();
 	struct MGwidget* w = allocWidget(MG_BOX);
+	if (parent != NULL)
+		addChildren(parent, w);
+	state.previous = w;
 
 	w->dir = dir;
 	w->style = computeStyle(getState(w), mgMergeStyles(mgStyle(mgTag("box")), style));
@@ -1652,8 +1739,10 @@ struct MGhit* mgBoxBegin(int dir, struct MGstyle style)
 struct MGhit* mgBoxEnd()
 {
 	struct MGwidget* w = popBox();
-	if (w != NULL)
+	if (w != NULL) {
 		fitToContent(w);
+		state.previous = w;
+	}
 	popTag();
 	return hitResult(w);
 }
@@ -1661,7 +1750,11 @@ struct MGhit* mgBoxEnd()
 struct MGhit* mgText(const char* text, struct MGstyle style)
 {
 	float tw, th;
+	struct MGwidget* parent = getParent();
 	struct MGwidget* w = allocWidget(MG_TEXT);
+	if (parent != NULL)
+		addChildren(parent, w);
+	state.previous = w;
 
 	w->text.text = allocText(text);
 
@@ -1687,7 +1780,11 @@ struct MGhit* mgText(const char* text, struct MGstyle style)
 
 struct MGhit* mgIcon(int width, int height, struct MGstyle style)
 {
+	struct MGwidget* parent = getParent();
 	struct MGwidget* w = allocWidget(MG_ICON);
+	if (parent != NULL)
+		addChildren(parent, w);
+	state.previous = w;
 
 	w->style = computeStyle(getState(w), mgMergeStyles(mgStyle(mgTag("icon"), mgWidth(width), mgWidth(height)), style));
 
@@ -1699,7 +1796,11 @@ struct MGhit* mgIcon(int width, int height, struct MGstyle style)
 
 struct MGhit* mgCanvas(MGcanvasLogicFun logic, MGcanvasRenderFun render, void* uptr, struct MGstyle style)
 {
+	struct MGwidget* parent = getParent();
 	struct MGwidget* w = allocWidget(MG_CANVAS);
+	if (parent != NULL)
+		addChildren(parent, w);
+	state.previous = w;
 
 	w->logic = logic;
 	w->render = render;
@@ -1954,7 +2055,10 @@ struct MGhit* mgScrollBar(float* offset, float contentSize, float viewSize, stru
 struct MGhit* mgInput(char* text, int maxtext, struct MGstyle style)
 {
 	float tw, th;
+	struct MGwidget* parent = getParent();
 	struct MGwidget* w = allocWidget(MG_INPUT);
+	if (parent != NULL)
+		addChildren(parent, w);
 
 	w->input.text = allocTextLen(text, maxtext);
 	w->input.maxtext = maxtext;
@@ -2043,4 +2147,70 @@ struct MGhit* mgSelect(int* value, const char** choices, int nchoises, struct MG
 	return mgBoxEnd();
 }
 
+struct MGpopupState {
+	int show;
+	int closeCounter;
+	float x, y;
+};
 
+struct MGhit* mgPopupBegin(struct MGhit* hit, int dir, struct MGstyle style)
+{
+	struct MGwidget* w = NULL;
+	struct MGpopupState* popup = NULL;
+	int show = 0;
+
+	pushId(state.panelCount+1);
+
+	w = allocWidget(MG_BOX);
+
+	popup = (struct MGpopupState*)allocTransient(w->id, sizeof(struct MGpopupState));
+	if (popup != NULL) {
+		if (popup->show) {
+			if (state.clicked) {
+				popup->closeCounter = 3;
+			}
+		}
+		if (hit != NULL) {
+			if (hit->clicked) {
+				popup->show = 1;
+				popup->closeCounter = 0;
+				popup->x = hit->bounds[0];
+				popup->y = hit->bounds[1] + hit->bounds[3];
+			}
+		}
+		if (popup->closeCounter > 0) {
+			popup->closeCounter--;
+			if (popup->closeCounter == 0) {
+				popup->show = 0;
+			}
+		}
+		show = popup->show;
+		w->x = popup->x;
+		w->y = popup->y;
+	}
+
+	w->active = show;
+	w->dir = dir;
+	w->style = computeStyle(getState(w), mgMergeStyles(mgStyle(mgTag("popup")), style));
+
+	pushBox(w);
+	pushTag(w->style.tag);
+
+	addPanel(w, 10000);
+
+	return hitResult(w);
+}
+
+struct MGhit* mgPopupEnd()
+{
+	popId();
+
+	popTag();
+	struct MGwidget* w = popBox();
+	if (w != NULL) {
+		fitToContent(w);
+		layoutWidgets(w);
+	}
+
+	return hitResult(w);
+}

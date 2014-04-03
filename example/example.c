@@ -125,10 +125,12 @@ int main()
 	while (!glfwWindowShouldClose(window))
 	{
 		double mx, my;
-		
 		int winWidth, winHeight;
 		int fbWidth, fbHeight;
 		float pxRatio;
+		float t = glfwGetTime();
+		float x,y,popy;
+		struct MGhit* hit;
 
 		glfwGetCursorPos(window, &mx, &my);
 		glfwGetWindowSize(window, &winWidth, &winHeight);
@@ -155,8 +157,6 @@ int main()
 		glEnable(GL_BLEND);
 		glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);*/
 
-		float t = glfwGetTime();
-		float x,y,popy;
 
 		nvgBeginFrame(vg, winWidth, winHeight, pxRatio, NVG_STRAIGHT_ALPHA);
 
@@ -165,16 +165,44 @@ int main()
 
 		// Menu bar
 //		mgBeginPanel("Menu", 0,0, winWidth, 30, MG_ROW, MG_JUSTIFY, 0, 0,0);
-		mgPanelBegin(MG_ROW, 0,0, winWidth, 30, mgStyle(mgTag("menubar"), mgAlign(MG_JUSTIFY)));
-			mgItem("File", mgStyle());
-			mgItem("Edit", mgStyle());
-			mgItem("Tools", mgStyle());
-			mgItem("View", mgStyle());
+
+		mgPanelBegin(MG_ROW, 0,0, 0, mgStyle(mgWidth(winWidth), mgHeight(30), mgTag("menubar"), mgAlign(MG_JUSTIFY)));
+			hit = mgItem("File", mgStyle());
+			mgPopupBegin(hit, MG_COL, mgStyle(mgAlign(MG_JUSTIFY)));
+				if (mgItem("Open...", mgStyle()))
+					printf("Open!\n");
+				mgItem("Save", mgStyle());
+				mgItem("Save As...", mgStyle());
+				mgItem("Close", mgStyle());
+			mgPopupEnd();
+
+			hit = mgItem("Edit", mgStyle());
+			mgPopupBegin(hit, MG_COL, mgStyle(mgAlign(MG_JUSTIFY)));
+				mgItem("Undo", mgStyle());
+				mgItem("Redo", mgStyle());
+				mgItem("Cut", mgStyle());
+				mgItem("Copy", mgStyle());
+				mgItem("Paste", mgStyle());
+			mgPopupEnd();
+
+			hit = mgItem("Tools", mgStyle());
+			mgPopupBegin(hit, MG_COL, mgStyle(mgAlign(MG_JUSTIFY)));
+				mgItem("Build", mgStyle());
+				mgItem("Clear", mgStyle());
+			mgPopupEnd();
+
+			hit = mgItem("View", mgStyle());
+			mgPopupBegin(hit, MG_COL, mgStyle(mgAlign(MG_JUSTIFY)));
+				mgItem("Sidebar", mgStyle());
+				mgItem("Minimap", mgStyle());
+				mgItem("Tabs", mgStyle());
+			mgPopupEnd();
+
 		mgPanelEnd();
 
 //		mgBeginPanel("NavMesh Options", 20,50, 250, MG_AUTO, MG_COL, MG_JUSTIFY, 0, 5);
 //		mgBeginPanel("NavMesh Options", 20,50, 250, winHeight - 50, MG_COL, MG_JUSTIFY, MG_SCROLL, 5,5);
-		mgPanelBegin(MG_COL, 20,50, 250, MG_AUTO_SIZE, mgStyle(mgTag("dialog"), mgAlign(MG_JUSTIFY), mgOverflow(MG_SCROLL), mgPadding(10,10)));
+		mgPanelBegin(MG_COL, 20,50, 0, mgStyle(mgWidth(250), mgHeight(MG_AUTO_SIZE), mgTag("dialog"), mgAlign(MG_JUSTIFY), mgOverflow(MG_SCROLL), mgPadding(10,10)));
 
 //		mgText("NavMesh Options", );
 
