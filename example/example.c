@@ -167,8 +167,8 @@ int main()
 //		mgBeginPanel("Menu", 0,0, winWidth, 30, MG_ROW, MG_JUSTIFY, 0, 0,0);
 
 		mgPanelBegin(MG_ROW, 0,0, 0, mgStyle(mgWidth(winWidth), mgHeight(30), mgTag("menubar"), mgAlign(MG_JUSTIFY)));
-			hit = mgItem("File", mgStyle());
-			mgPopupBegin(hit, MG_COL, mgStyle(mgAlign(MG_JUSTIFY)));
+			mgItem("File", mgStyle());
+			mgPopupBegin(MG_HOVER, MG_COL, mgStyle(mgAlign(MG_JUSTIFY)));
 				if (mgItem("Open...", mgStyle()))
 					printf("Open!\n");
 				mgItem("Save", mgStyle());
@@ -176,8 +176,8 @@ int main()
 				mgItem("Close", mgStyle());
 			mgPopupEnd();
 
-			hit = mgItem("Edit", mgStyle());
-			mgPopupBegin(hit, MG_COL, mgStyle(mgAlign(MG_JUSTIFY)));
+			mgItem("Edit", mgStyle());
+			mgPopupBegin(MG_HOVER, MG_COL, mgStyle(mgAlign(MG_JUSTIFY)));
 				mgItem("Undo", mgStyle());
 				mgItem("Redo", mgStyle());
 				mgItem("Cut", mgStyle());
@@ -185,14 +185,20 @@ int main()
 				mgItem("Paste", mgStyle());
 			mgPopupEnd();
 
-			hit = mgItem("Tools", mgStyle());
-			mgPopupBegin(hit, MG_COL, mgStyle(mgAlign(MG_JUSTIFY)));
+			mgItem("Tools", mgStyle());
+			mgPopupBegin(MG_HOVER, MG_COL, mgStyle(mgAlign(MG_JUSTIFY)));
 				mgItem("Build", mgStyle());
 				mgItem("Clear", mgStyle());
+				mgItem("Align", mgStyle());
+				mgPopupBegin(MG_HOVER, MG_COL, mgStyle(mgAlign(MG_JUSTIFY)));
+					mgItem("Left", mgStyle());
+					mgItem("Center", mgStyle());
+					mgItem("Right", mgStyle());
+				mgPopupEnd();
 			mgPopupEnd();
 
-			hit = mgItem("View", mgStyle());
-			mgPopupBegin(hit, MG_COL, mgStyle(mgAlign(MG_JUSTIFY)));
+			mgItem("View", mgStyle());
+			mgPopupBegin(MG_HOVER, MG_COL, mgStyle(mgAlign(MG_JUSTIFY)));
 				mgItem("Sidebar", mgStyle());
 				mgItem("Minimap", mgStyle());
 				mgItem("Tabs", mgStyle());

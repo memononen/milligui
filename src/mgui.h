@@ -176,6 +176,7 @@ struct MGwidget {
 	unsigned char type;
 	unsigned char state;
 	unsigned char active;
+	unsigned char bubble;
 	union {
 		struct {
 			char* text;
@@ -225,7 +226,7 @@ struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGstyle args
 struct MGhit* mgProgress(float progress, struct MGstyle args);
 struct MGhit* mgScrollBar(float* offset, float contentSize, float viewSize, struct MGstyle args);
 
-struct MGhit* mgPopupBegin(struct MGhit* hit, int dir, struct MGstyle args);
+struct MGhit* mgPopupBegin(int trigger, int dir, struct MGstyle args);
 struct MGhit* mgPopupEnd();
 
 

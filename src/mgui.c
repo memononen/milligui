@@ -272,6 +272,7 @@ static struct MGwidget* allocWidget(int type)
 	w->id = genId();
 	w->type = type;
 	w->active = 1;
+	w->bubble = 1;
 	return w;
 }
 
@@ -1138,9 +1139,39 @@ static void cleanUpTransients()
 	state.transientCount = n;
 }
 
+static void offsetWidget(struct MGwidget* w, float dx, float dy)
+{
+	w->x += dx;
+	w->y += dy;
+	if  (w->type == MG_BOX) {
+		struct MGwidget* c = NULL;
+		for (c = w->box.children; c != NULL; c = c->next)
+			offsetWidget(c, dx, dy);
+	}
+} 
+
+static void offsetPopups()
+{	
+	int i;
+	if (state.vg == NULL) return;	
+	for (i = 0; i < state.panelCount; i++) {
+		struct MGwidget* w = state.panels[i];
+		if (!w->active) continue;
+		if (w->parent) {
+			float dx = w->parent->x;
+			float dy = w->parent->y + w->parent->height;
+			offsetWidget(w, dx,dy);
+		}
+	}
+}
+
+
 void mgFrameEnd()
 {
 	float bounds[4] = {0, 0, state.width, state.height};
+
+	offsetPopups();
+
 	updateLogic(bounds);
 	drawPanels(bounds);
 
@@ -1216,10 +1247,10 @@ static void layoutWidgets(struct MGwidget* root)
 	float sum = 0, avail = 0;
 	int ngrow = 0, nitems = 0;
 
-	if (root->parent == NULL) {
+/*	if (root->parent == NULL) {
 		root->width = root->style.width;
 		root->height = root->style.height;
-	}
+	}*/
 
 	x = root->x + root->style.paddingx;
 	y = root->y + root->style.paddingy;
@@ -1542,11 +1573,37 @@ static struct MGhit* hitResult(struct MGwidget* w)
 static unsigned char getState(struct MGwidget* w)
 {
 	unsigned char ret = MG_NORMAL;
-	if (w->parent != NULL)
+	if (w == NULL) return ret;
+	if (w->parent != NULL && w->bubble)
 		ret = getState(w->parent);
 	if (state.active == w->id) ret |= MG_ACTIVE;
 	if (state.hover == w->id) ret |= MG_HOVER;
 	if (state.focus == w->id) ret |= MG_FOCUS;
+	return ret;
+}
+
+static unsigned char getSelfState(struct MGwidget* w)
+{
+	unsigned char ret = MG_NORMAL;
+	if (w == NULL) return ret;
+	if (state.active == w->id) ret |= MG_ACTIVE;
+	if (state.hover == w->id) ret |= MG_HOVER;
+	if (state.focus == w->id) ret |= MG_FOCUS;
+	return ret;
+}
+
+static unsigned char getChildState(struct MGwidget* w)
+{
+	unsigned char ret = MG_NORMAL;
+	if (w == NULL) return ret;
+	if (state.active == w->id) ret |= MG_ACTIVE;
+	if (state.hover == w->id) ret |= MG_HOVER;
+	if (state.focus == w->id) ret |= MG_FOCUS;
+	if (w->type == MG_BOX) {
+		struct MGwidget* c;
+		for (c = w->box.children; c != NULL; c = c->next)
+			ret |= getChildState(c);
+	}
 	return ret;
 }
 
@@ -1712,6 +1769,8 @@ struct MGhit* mgPanelEnd()
 	struct MGwidget* w = popBox();
 	if (w != NULL) {
 		fitToContent(w);
+		w->width = w->style.width;
+		w->height = w->style.height;
 		layoutWidgets(w);
 		state.previous = w;
 	}
@@ -2141,19 +2200,27 @@ struct MGhit* mgLabel(const char* text, struct MGstyle style)
 
 struct MGhit* mgSelect(int* value, const char** choices, int nchoises, struct MGstyle style)
 {
+	int i;
 	mgBoxBegin(MG_ROW, mgMergeStyles(mgStyle(mgTag("select")), style));
 		mgText(choices[*value], mgStyle(mgGrow(1)));
 		mgIcon(CHECKBOX_SIZE, CHECKBOX_SIZE, mgStyle());
-	return mgBoxEnd();
+	mgBoxEnd();
+	mgPopupBegin(MG_ACTIVE, MG_COL, mgStyle(mgAlign(MG_JUSTIFY)));
+		for (i = 0; i < nchoises; i++)
+			mgItem(choices[i], mgStyle());
+	mgPopupEnd();
+	return NULL;
 }
 
 struct MGpopupState {
 	int show;
-	int closeCounter;
+	int counter;
+	int hover;
+	int trigger;
 	float x, y;
 };
 
-struct MGhit* mgPopupBegin(struct MGhit* hit, int dir, struct MGstyle style)
+struct MGhit* mgPopupBegin(int trigger, int dir, struct MGstyle style)
 {
 	struct MGwidget* w = NULL;
 	struct MGpopupState* popup = NULL;
@@ -2162,34 +2229,67 @@ struct MGhit* mgPopupBegin(struct MGhit* hit, int dir, struct MGstyle style)
 	pushId(state.panelCount+1);
 
 	w = allocWidget(MG_BOX);
+	w->parent = state.previous;
 
 	popup = (struct MGpopupState*)allocTransient(w->id, sizeof(struct MGpopupState));
 	if (popup != NULL) {
+//		if (hit != NULL) {
+//			if (hit->clicked) {
+		popup->trigger = trigger;
+		if (state.previous != NULL) {
+			if (trigger == MG_HOVER) {
+				if ((getState(state.previous) & MG_HOVER) || popup->hover) {
+					popup->counter++;
+				} else {
+					popup->counter--;
+//					if (popup->show & popup->closeCounter == 0)
+//						popup->closeCounter = 2;
+				}
+			}			
+			if (trigger == MG_ACTIVE) {
+				if ((getState(state.previous) & MG_ACTIVE)) {
+					popup->counter = 2;
+				}
+			}
+		}
+
+		if (popup->counter > 2) popup->counter = 2;
+		if (popup->counter < 0) popup->counter = 0;
+
 		if (popup->show) {
-			if (state.clicked) {
-				popup->closeCounter = 3;
+			if (trigger == MG_HOVER) {
+				if (state.released) {
+					popup->counter = 0;
+				}
+			}
+			if (trigger == MG_ACTIVE) {
+				// close on second release, the first will come from the activation
+				if (state.released) {
+					popup->counter--;
+				}
 			}
 		}
-		if (hit != NULL) {
-			if (hit->clicked) {
+
+		popup->hover = 0;
+
+		if (popup->show == 0) {
+			if (popup->counter == 2)
 				popup->show = 1;
-				popup->closeCounter = 0;
-				popup->x = hit->bounds[0];
-				popup->y = hit->bounds[1] + hit->bounds[3];
-			}
-		}
-		if (popup->closeCounter > 0) {
-			popup->closeCounter--;
-			if (popup->closeCounter == 0) {
+		} else {
+			if (popup->counter == 0)
 				popup->show = 0;
-			}
 		}
+
+		popup->x = 0;
+		popup->y = 0;
+
 		show = popup->show;
 		w->x = popup->x;
 		w->y = popup->y;
 	}
 
 	w->active = show;
+	w->bubble = 0;
 	w->dir = dir;
 	w->style = computeStyle(getState(w), mgMergeStyles(mgStyle(mgTag("popup")), style));
 
@@ -2203,12 +2303,25 @@ struct MGhit* mgPopupBegin(struct MGhit* hit, int dir, struct MGstyle style)
 
 struct MGhit* mgPopupEnd()
 {
+	struct MGwidget* w = NULL;
 	popId();
-
 	popTag();
-	struct MGwidget* w = popBox();
+	w = popBox();
 	if (w != NULL) {
+		struct MGpopupState* popup = (struct MGpopupState*)allocTransient(w->id, sizeof(struct MGpopupState));
+		if (popup != NULL) {
+			if (popup->show) {
+				if (popup->trigger == MG_HOVER) {
+					if (getChildState(w) & MG_HOVER) {
+						popup->hover = 1;
+					}
+				}
+			}
+		}
+
 		fitToContent(w);
+		w->width = w->style.width;
+		w->height = w->style.height;
 		layoutWidgets(w);
 	}
 
