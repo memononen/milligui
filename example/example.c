@@ -111,14 +111,14 @@ int main()
 
 	mgInit();
 
-	mgCreateStyle("menubar", mgStyle(
+	mgCreateStyle("menubar", mgOpts(
 		mgFillColor(255,255,255,32)
-	), mgStyle(), mgStyle(), mgStyle());
+	), mgOpts(), mgOpts(), mgOpts());
 
-	mgCreateStyle("dialog", mgStyle(
+	mgCreateStyle("dialog", mgOpts(
 		mgFillColor(255,255,255,32),
 		mgCornerRadius(4)
-	), mgStyle(), mgStyle(), mgStyle());
+	), mgOpts(), mgOpts(), mgOpts());
 
 	glfwSetTime(0);
 
@@ -166,87 +166,87 @@ int main()
 		// Menu bar
 //		mgBeginPanel("Menu", 0,0, winWidth, 30, MG_ROW, MG_JUSTIFY, 0, 0,0);
 
-		mgPanelBegin(MG_ROW, 0,0, 0, mgStyle(mgWidth(winWidth), mgHeight(30), mgTag("menubar"), mgAlign(MG_JUSTIFY)));
-			mgItem("File", mgStyle());
-			mgPopupBegin(MG_HOVER, MG_COL, mgStyle(mgAlign(MG_JUSTIFY)));
-				if (mgItem("Open...", mgStyle()))
+		mgPanelBegin(MG_ROW, 0,0, 0, mgOpts(mgWidth(winWidth), mgHeight(30), mgTag("menubar"), mgAlign(MG_JUSTIFY)));
+			mgItem("File", mgOpts());
+			mgPopupBegin(MG_HOVER, MG_COL, mgOpts(mgAlign(MG_JUSTIFY)));
+				if (mgItem("Open...", mgOpts()))
 					printf("Open!\n");
-				mgItem("Save", mgStyle());
-				mgItem("Save As...", mgStyle());
-				mgItem("Close", mgStyle());
+				mgItem("Save", mgOpts());
+				mgItem("Save As...", mgOpts());
+				mgItem("Close", mgOpts());
 			mgPopupEnd();
 
-			mgItem("Edit", mgStyle());
-			mgPopupBegin(MG_HOVER, MG_COL, mgStyle(mgAlign(MG_JUSTIFY)));
-				mgItem("Undo", mgStyle());
-				mgItem("Redo", mgStyle());
-				mgItem("Cut", mgStyle());
-				mgItem("Copy", mgStyle());
-				mgItem("Paste", mgStyle());
+			mgItem("Edit", mgOpts());
+			mgPopupBegin(MG_HOVER, MG_COL, mgOpts(mgAlign(MG_JUSTIFY)));
+				mgItem("Undo", mgOpts());
+				mgItem("Redo", mgOpts());
+				mgItem("Cut", mgOpts());
+				mgItem("Copy", mgOpts());
+				mgItem("Paste", mgOpts());
 			mgPopupEnd();
 
-			mgItem("Tools", mgStyle());
-			mgPopupBegin(MG_HOVER, MG_COL, mgStyle(mgAlign(MG_JUSTIFY)));
-				mgItem("Build", mgStyle());
-				mgItem("Clear", mgStyle());
-				mgItem("Align", mgStyle());
-				mgPopupBegin(MG_HOVER, MG_COL, mgStyle(mgAlign(MG_JUSTIFY)));
-					mgItem("Left", mgStyle());
-					mgItem("Center", mgStyle());
-					mgItem("Right", mgStyle());
+			mgItem("Tools", mgOpts());
+			mgPopupBegin(MG_HOVER, MG_COL, mgOpts(mgAlign(MG_JUSTIFY)));
+				mgItem("Build", mgOpts());
+				mgItem("Clear", mgOpts());
+				mgItem("Align", mgOpts());
+				mgPopupBegin(MG_HOVER, MG_COL, mgOpts(mgAlign(MG_JUSTIFY)));
+					mgItem("Left", mgOpts());
+					mgItem("Center", mgOpts());
+					mgItem("Right", mgOpts());
 				mgPopupEnd();
 			mgPopupEnd();
 
-			mgItem("View", mgStyle());
-			mgPopupBegin(MG_HOVER, MG_COL, mgStyle(mgAlign(MG_JUSTIFY)));
-				mgItem("Sidebar", mgStyle());
-				mgItem("Minimap", mgStyle());
-				mgItem("Tabs", mgStyle());
+			mgItem("View", mgOpts());
+			mgPopupBegin(MG_HOVER, MG_COL, mgOpts(mgAlign(MG_JUSTIFY)));
+				mgItem("Sidebar", mgOpts());
+				mgItem("Minimap", mgOpts());
+				mgItem("Tabs", mgOpts());
 			mgPopupEnd();
 
 		mgPanelEnd();
 
 //		mgBeginPanel("NavMesh Options", 20,50, 250, MG_AUTO, MG_COL, MG_JUSTIFY, 0, 5);
 //		mgBeginPanel("NavMesh Options", 20,50, 250, winHeight - 50, MG_COL, MG_JUSTIFY, MG_SCROLL, 5,5);
-		mgPanelBegin(MG_COL, 20,50, 0, mgStyle(mgWidth(250), mgHeight(MG_AUTO_SIZE), mgTag("dialog"), mgAlign(MG_JUSTIFY), mgOverflow(MG_SCROLL), mgPadding(10,10)));
+		mgPanelBegin(MG_COL, 20,50, 0, mgOpts(mgWidth(250), mgHeight(MG_AUTO_SIZE), mgTag("dialog"), mgAlign(MG_JUSTIFY), mgOverflow(MG_SCROLL), mgPadding(10,10)));
 
 //		mgText("NavMesh Options", );
 
-		mgLabel("Blending", mgStyle());
-		mgSelect(&blending, choices, 4, mgStyle());
+		mgLabel("Blending", mgOpts());
+		mgSelect(&blending, choices, 4, mgOpts());
 
-		mgLabel("Opacity", mgStyle());
-		mgSlider(&opacity, 0.0f, 1.0f, mgStyle());
+		mgLabel("Opacity", mgOpts());
+		mgSlider(&opacity, 0.0f, 1.0f, mgOpts());
 
-		mgLabel("Iterations", mgStyle());
-		mgNumber(&iterations, mgStyle());
+		mgLabel("Iterations", mgOpts());
+		mgNumber(&iterations, mgOpts());
 
-		mgLabel("Position", mgStyle());
-		mgNumber3(&position[0], &position[1], &position[2], "mm", mgStyle());
+		mgLabel("Position", mgOpts());
+		mgNumber3(&position[0], &position[1], &position[2], "mm", mgOpts());
 
-		mgLabel("Color", mgStyle());
-		mgColor(&color[0], &color[1], &color[2], &color[3], mgStyle());
+		mgLabel("Color", mgOpts());
+		mgColor(&color[0], &color[1], &color[2], &color[3], mgOpts());
 
-		mgCheckBox("Cull Enabled", &cull, mgStyle());
-		mgLabel("Name", mgStyle());
+		mgCheckBox("Cull Enabled", &cull, mgOpts());
+		mgLabel("Name", mgOpts());
 
-		mgInput(name, 64, mgStyle());
-		if (mgButton("Build", mgStyle())) {
+		mgInput(name, 64, mgOpts());
+		if (mgButton("Build", mgOpts())) {
 			printf("Build!!\n");
 		}
 
-		mgProgress(sqr(sinf(glfwGetTime()*0.3f)), mgStyle());
+		mgProgress(sqr(sinf(glfwGetTime()*0.3f)), mgOpts());
 
 //		scroll = (200 - 45) * sqr(sinf(glfwGetTime()*0.3f));
-		mgScrollBar(&scroll, 200, 45, mgStyle());
+		mgScrollBar(&scroll, 200, 45, mgOpts());
 
-		mgBoxBegin(MG_ROW, mgStyle());
-			mgBoxBegin(MG_COL, mgStyle(mgGrow(1), mgAlign(MG_JUSTIFY)));
-				mgButton("Build1", mgStyle());
-				mgButton("Build2", mgStyle());
-				mgButton("Build3", mgStyle());
+		mgBoxBegin(MG_ROW, mgOpts());
+			mgBoxBegin(MG_COL, mgOpts(mgGrow(1), mgAlign(MG_JUSTIFY)));
+				mgButton("Build1", mgOpts());
+				mgButton("Build2", mgOpts());
+				mgButton("Build3", mgOpts());
 			mgBoxEnd();
-			mgButton("Build4", mgStyle());
+			mgButton("Build4", mgOpts());
 		mgBoxEnd();
 
 
