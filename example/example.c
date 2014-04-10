@@ -31,11 +31,13 @@ int mbut = 0;
 
 void errorcb(int error, const char* desc)
 {
-	printf("GLFW error: %s\n", desc);
+	printf("GLFW error %d: %s\n", error, desc);
 }
 
 static void key(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
+	(void)scancode;
+	(void)mods;
 	if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
 		glfwSetWindowShouldClose(window, GL_TRUE);
 }
@@ -43,6 +45,7 @@ static void key(GLFWwindow* window, int key, int scancode, int action, int mods)
 static void mousebutton(GLFWwindow* window, int button, int action, int mods)
 {
 	(void)window;
+	(void)mods;
 	if (button == GLFW_MOUSE_BUTTON_LEFT ) {
 		if (action == GLFW_PRESS) {
 			mbut |= MG_MOUSE_PRESSED;
@@ -59,7 +62,6 @@ int main()
 {
 	GLFWwindow* window;
 	struct NVGcontext* vg = NULL;
-	int i;
 	int blending = 0;
 	float opacity = 0.5f;
 	float position[3] = {100.0f, 120.0f, 234.0f};
@@ -128,9 +130,9 @@ int main()
 		int winWidth, winHeight;
 		int fbWidth, fbHeight;
 		float pxRatio;
-		float t = glfwGetTime();
-		float x,y,popy;
-		struct MGhit* hit;
+//		float t = glfwGetTime();
+//		float x,y,popy;
+//		struct MGhit* hit;
 
 		glfwGetCursorPos(window, &mx, &my);
 		glfwGetWindowSize(window, &winWidth, &winHeight);
@@ -241,7 +243,7 @@ int main()
 		mgScrollBar(&scroll, 200, 45, mgOpts());
 
 		mgBoxBegin(MG_ROW, mgOpts());
-			mgBoxBegin(MG_COL, mgOpts(mgGrow(1), mgAlign(MG_JUSTIFY)));
+			mgBoxBegin(MG_COL, mgOpts(mgGrow(1), mgSpacing(5), mgAlign(MG_JUSTIFY)));
 				mgButton("Build1", mgOpts());
 				mgButton("Build2", mgOpts());
 				mgButton("Build3", mgOpts());

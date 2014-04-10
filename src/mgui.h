@@ -33,8 +33,8 @@ enum MUIalign {
 #define MG_AUTO_SIZE 0xffff
 
 enum MGargTypes {
-	MG_NONE = 0,
-	MG_WIDTH_ARG,			// 1
+	MG_NONE = 0,			// 0
+	MG_WIDTH_ARG,			
 	MG_HEIGHT_ARG,
 	MG_PROPWIDTH_ARG,
 	MG_PROPHEIGHT_ARG,
@@ -54,12 +54,14 @@ enum MGargTypes {
 	MG_BORDERSIZE_ARG,
 	MG_CORNERRADIUS_ARG,
 	MG_TAG_ARG,				// 20
-	MG_RELATIVE_ARG,
-	MG_RELATIVEX_ARG,
-	MG_RELATIVEY_ARG,
+	MG_ANCHOR_ARG,
+	MG_PROPX_ARG,
+	MG_PROPY_ARG,
+	MG_X_ARG,
+	MG_Y_ARG,
 };
 
-enum MGlogic {
+enum MGlogicType {
 	MG_CLICK = 1,
 	MG_DRAG = 2,
 	MG_TYPE = 3,
@@ -69,24 +71,30 @@ enum MGlogic {
 #define mgOverflow(v)			(mgPackOpt(MG_OVERFLOW_ARG, (v)))
 #define mgAlign(v)				(mgPackOpt(MG_ALIGN_ARG, (v)))
 #define mgGrow(v)				(mgPackOpt(MG_GROW_ARG, (v)))
-#define mgWidth(v)				(mgPackOpt(MG_WIDTH_ARG, (v)))
-#define mgHeight(v)				(mgPackOpt(MG_HEIGHT_ARG, (v)))
+
+#define mgWidth(v)				(mgPackOptf(MG_WIDTH_ARG, (v)))
+#define mgHeight(v)				(mgPackOptf(MG_HEIGHT_ARG, (v)))
 #define mgPropWidth(v)			(mgPackOptf(MG_PROPWIDTH_ARG, (v)))
 #define mgPropHeight(v)			(mgPackOptf(MG_PROPHEIGHT_ARG, (v)))
+#define mgPosition(a,b,x,y)		(mgPackOpt2(MG_ANCHOR_ARG, (a), (b))), (mgPackOptf(MG_X_ARG, (x))), (mgPackOptf(MG_Y_ARG, (y)))
+#define mgPropPosition(a,b,x,y)	(mgPackOpt2(MG_ANCHOR_ARG, (a), (b))), (mgPackOptf(MG_PROPX_ARG, (x))), (mgPackOptf(MG_PROPY_ARG, (y)))
+
 #define mgPaddingX(v)			(mgPackOpt(MG_PADDINGX_ARG, (v)))
 #define mgPaddingY(v)			(mgPackOpt(MG_PADDINGY_ARG, (v)))
 #define mgPadding(x,y)			(mgPackOpt(MG_PADDINGX_ARG, (x))), (mgPackOpt(MG_PADDINGY_ARG, (y)))
 #define mgSpacing(v)			(mgPackOpt(MG_SPACING_ARG, (v)))
+
 #define mgFontSize(v)			(mgPackOpt(MG_FONTSIZE_ARG, (v)))
 #define mgTextAlign(v)			(mgPackOpt(MG_TEXTALIGN_ARG, (v)))
+
 #define mgLogic(v)				(mgPackOpt(MG_LOGIC_ARG, (v)))
+
 #define mgContentColor(r,g,b,a)	(mgPackOpt(MG_CONTENTCOLOR_ARG, mgRGBA((r),(g),(b),(a))))
 #define mgFillColor(r,g,b,a)	(mgPackOpt(MG_FILLCOLOR_ARG, mgRGBA((r),(g),(b),(a))))
 #define mgBorderColor(r,g,b,a)	(mgPackOpt(MG_BORDERCOLOR_ARG, mgRGBA((r),(g),(b),(a))))
 #define mgBorderSize(v)			(mgPackOpt(MG_BORDERSIZE_ARG, (v)))
 #define mgCornerRadius(v)		(mgPackOpt(MG_CORNERRADIUS_ARG, (v)))
 #define mgTag(v)				(mgPackOptStr(MG_TAG_ARG, (v)))
-#define mgRelative(a,b,x,y)		(mgPackOpt2(MG_RELATIVE_ARG, (a), (b))), (mgPackOptf(MG_RELATIVEX_ARG, (x))), (mgPackOptf(MG_RELATIVEY_ARG, (y)))
 
 struct MGopt {
 	unsigned char type;
@@ -101,28 +109,35 @@ struct MGopt {
 
 struct MGstyle {
 	unsigned int set;
+
+	float width;
+	float height;
+	float x;
+	float y;
+
 	unsigned int contentColor;
 	unsigned int fillColor;
 	unsigned int borderColor;
-	unsigned short width;
-	unsigned short height;
-	float propWidth;
-	float propHeight;
+
+	unsigned char cornerRadius;
+	unsigned char borderSize;
+
 	unsigned char spacing;
 	unsigned char paddingx;
 	unsigned char paddingy;
+
 	unsigned char grow;
 	unsigned char align;
 	unsigned char overflow;
+
 	unsigned char fontSize;
 	unsigned char textAlign;
+
 	unsigned char logic;
-	unsigned char cornerRadius;
-	unsigned char borderSize;
-	unsigned char relative;
-	float relativex;
-	float relativey;
+
+	unsigned char anchor;
 };
+
 
 #define mgOpts(...) mgOpts_(0, ##__VA_ARGS__, NULL)
 struct MGopt* mgOpts_(unsigned int dummy, ...);
@@ -171,6 +186,7 @@ typedef void (*MGcanvasLogicFun)(void* uptr, struct MGwidget* w, struct MGhit* h
 struct MGwidget {
 	unsigned int id;
 	float x, y, width, height;
+	float cwidth, cheight;
 	
 	struct MGstyle style;
 

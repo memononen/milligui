@@ -961,6 +961,22 @@ static void updateLogic(const float* bounds)
 		active->logic(active->uptr, active, &state.result);
 }
 
+static void drawDebugRect(struct MGwidget* w)
+{
+	// round
+	nvgBeginPath(state.vg);
+	nvgRect(state.vg, w->x + w->style.paddingx+0.5f, w->y + w->style.paddingy+0.5f, w->width - w->style.paddingx*2, w->height - w->style.paddingy*2);
+	nvgStrokeWidth(state.vg, 1.0f);
+	nvgStrokeColor(state.vg, nvgRGBA(255,0,0,128));
+	nvgStroke(state.vg);
+
+/*	nvgBeginPath(state.vg);
+	nvgRect(state.vg, x+w->style.paddingx+0.5f, y+w->style.paddingy+0.5f, w->cwidth, w->cheight);
+	nvgStrokeWidth(state.vg, 1.0f);
+	nvgStrokeColor(state.vg, nvgRGBA(255,255,0,128));
+	nvgStroke(state.vg);*/
+}
+
 static void drawRect(struct MGwidget* w)
 {
 	// round
@@ -1016,6 +1032,7 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 	struct MGwidget* w;
 	float bbounds[4];
 	float wbounds[4];
+	int debug = 0;
 
 	nvgFontFace(state.vg, "sans");
 	nvgFontSize(state.vg, TEXT_SIZE);
@@ -1023,6 +1040,8 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 	nvgScissor(state.vg, (int)bounds[0], (int)bounds[1], (int)bounds[2], (int)bounds[3]);
 
 	drawRect(box);
+
+	if (debug) drawDebugRect(box);
 
 	// calc panel bounds
 	if (box->style.overflow == MG_VISIBLE) {
@@ -1037,9 +1056,9 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 
 	for (i = 0; i < 2; i++) {
 		for (w = box->box.children; w != NULL; w = w->next) {
-			unsigned char rel = isStyleSet(&w->style, MG_RELATIVE_ARG);
-			// draw relative last
-			if ((i == 0 && rel) || (i == 1 && !rel))
+			unsigned char anchor = isStyleSet(&w->style, MG_ANCHOR_ARG);
+			// draw anchored last
+			if ((i == 0 && anchor) || (i == 1 && !anchor))
 				continue;
 
 			if (!visible(bbounds, w->x, w->y, w->width, w->height))
@@ -1054,6 +1073,7 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 
 			case MG_TEXT:
 				drawRect(w);
+				if (debug) drawDebugRect(w);
 				isectBounds(wbounds, bbounds, w->x, w->y, w->width, w->height);
 				if (wbounds[2] > 0.0f && wbounds[3] > 0.0f) {
 					nvgScissor(state.vg, (int)wbounds[0], (int)wbounds[1], (int)wbounds[2], (int)wbounds[3]);
@@ -1063,11 +1083,12 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 
 			case MG_ICON:
 				drawRect(w);
+				if (debug) drawDebugRect(w);
 				break;
 
 			case MG_INPUT:
 				drawRect(w);
-
+				if (debug) drawDebugRect(w);
 				isectBounds(wbounds, bbounds, w->x, w->y, w->width, w->height);
 				if (wbounds[2] > 0.0f && wbounds[3] > 0.0f) {
 					nvgScissor(state.vg, (int)wbounds[0], (int)wbounds[1], (int)wbounds[2], (int)wbounds[3]);
@@ -1080,6 +1101,7 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 				if (w->render != NULL && wbounds[2] > 0.0f && wbounds[3] > 0.0f) {
 					w->render(w->uptr, w, state.vg, wbounds);
 				}
+				if (debug) drawDebugRect(w);
 				break;
 			}
 		}
@@ -1088,9 +1110,9 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 	if (box->style.overflow == MG_SCROLL) {
 		nvgScissor(state.vg, bbounds[0], bbounds[1], bbounds[2], bbounds[3]);
 		if (box->dir == MG_ROW) {
-			float contentSize = box->style.width;
+			float contentSize = box->cwidth;
 			float containerSize = box->width;
-			if (contentSize > 0 && contentSize > containerSize) {
+			if (contentSize > containerSize+0.5f) {
 				float x = box->x + SCROLL_PAD;
 				float y = box->y + box->height - (SCROLL_SIZE + SCROLL_PAD);
 				float w = maxf(0, box->width - SCROLL_PAD*2);
@@ -1107,9 +1129,9 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 				nvgFill(state.vg);
 			}
 		} else {
-			float contentSize = box->style.height;
+			float contentSize = box->cheight;
 			float containerSize = box->height;
-			if (contentSize > 0 && contentSize > containerSize) {
+			if (contentSize > containerSize+0.5f) {
 				float x = box->x + box->width - (SCROLL_SIZE + SCROLL_PAD);
 				float y = box->y + SCROLL_PAD;
 				float w = SCROLL_SIZE;
@@ -1214,36 +1236,27 @@ static void fitToContent(struct MGwidget* root)
 	float width = 0;
 	float height = 0;
 
-//	root->style.width = 0;
-//	root->style.height = 0;
-
 	if (root->dir == MG_COL) {
 		for (w = root->box.children; w != NULL; w = w->next) {
-			if (isStyleSet(&w->style, MG_RELATIVE_ARG)) continue;
-			width = maxf(width, w->style.width);
-			height += w->style.height;
+			if (isStyleSet(&w->style, MG_ANCHOR_ARG)) continue;
+			width = maxf(width, w->cwidth + w->style.paddingx*2);
+			height += w->cheight + w->style.paddingy*2;
 			if (w->next != NULL) height += w->style.spacing;
 		}
 	} else {
 		for (w = root->box.children; w != NULL; w = w->next) {
-			if (isStyleSet(&w->style, MG_RELATIVE_ARG)) continue;
-			width += w->style.width;
-			height = maxf(height, w->style.height);
+			if (isStyleSet(&w->style, MG_ANCHOR_ARG)) continue;
+			width += w->cwidth + w->style.paddingx*2;
+			height = maxf(height, w->cheight + w->style.paddingy*2);
 			if (w->next != NULL) width += w->style.spacing;
 		}
 	}
 
-	if (!isStyleSet(&root->style, MG_WIDTH_ARG) || root->style.width == MG_AUTO_SIZE)
-		root->style.width = width;
-	if (!isStyleSet(&root->style, MG_HEIGHT_ARG) ||root->style.height == MG_AUTO_SIZE)
-		root->style.height = height;
-
-
-	root->style.width += root->style.paddingx*2;
-	root->style.height += root->style.paddingy*2;
+	root->cwidth = width;
+	root->cheight = height;
 }
 
-static float calcRelativeDelta(unsigned char align, float u, float psize, float wsize)
+static float calcPropDelta(unsigned char align, float u, float psize, float wsize)
 {
 	switch (align) {
 	case MG_START: return psize*u;
@@ -1254,17 +1267,46 @@ static float calcRelativeDelta(unsigned char align, float u, float psize, float 
 	return 0;
 }
 
+static float calcPosDelta(unsigned char align, float x, float psize, float wsize)
+{
+	switch (align) {
+	case MG_START: return x;
+	case MG_END: return psize - wsize + x;
+	case MG_CENTER: return psize/2 - wsize/2 + x;
+	case MG_JUSTIFY: return x;
+	}
+	return 0;
+}
+
+static void applySize(struct MGwidget* w)
+{
+	if (isStyleSet(&w->style, MG_WIDTH_ARG) && w->style.width != MG_AUTO_SIZE)
+		w->cwidth = w->style.width;
+	if (isStyleSet(&w->style, MG_HEIGHT_ARG) && w->style.height != MG_AUTO_SIZE)
+		w->cheight = w->style.height;
+}
+
+static void applyPanelSize(struct MGwidget* w)
+{
+	w->width = w->cwidth;
+	w->height = w->cheight;
+
+	if (isStyleSet(&w->style, MG_WIDTH_ARG) && w->style.width != MG_AUTO_SIZE)
+		w->width = w->style.width;
+	if (isStyleSet(&w->style, MG_HEIGHT_ARG) && w->style.height != MG_AUTO_SIZE)
+		w->height = w->style.height;
+
+	w->width += w->style.paddingx*2;
+	w->height += w->style.paddingy*2;
+	// Prop size is not used.
+}
+
 static void layoutWidgets(struct MGwidget* root)
 {
 	struct MGwidget* w = NULL;
 	float x, y, rw, rh;
 	float sum = 0, avail = 0;
 	int ngrow = 0, nitems = 0;
-
-/*	if (root->parent == NULL) {
-		root->width = root->style.width;
-		root->height = root->style.height;
-	}*/
 
 	x = root->x + root->style.paddingx;
 	y = root->y + root->style.paddingy;
@@ -1274,33 +1316,53 @@ static void layoutWidgets(struct MGwidget* root)
 	// Allocate space for scrollbar
 	if (root->style.overflow == MG_SCROLL) {
 		if (root->dir == MG_ROW) {
-			if (root->style.width > 0 && root->style.width > root->width)
+			if (root->cwidth > rw+0.5f)
 				rh = maxf(0, rh - (SCROLL_SIZE+SCROLL_PAD*2));
 		} else {
-			if (root->style.height > 0 && root->style.height > root->height)
+			if (root->cheight > rh+0.5f)
 				rw = maxf(0, rw - (SCROLL_SIZE+SCROLL_PAD*2));
 		}
 	}
 
 	for (w = root->box.children; w != NULL; w = w->next) {
-		w->width = w->style.width;
-		w->height = w->style.height;
-		if (isStyleSet(&w->style, MG_PROPWIDTH_ARG))
-			w->width = clampf(maxf(0, rw - w->style.paddingx*2) * w->style.propWidth /* / 65535.0f*/ + w->style.paddingx*2, 0, rw);
-		if (isStyleSet(&w->style, MG_PROPHEIGHT_ARG))
-			w->height = clampf(maxf(0, rh - w->style.paddingy*2) * w->style.propHeight /* / 65535.0f */ + w->style.paddingy*2, 0, rh);
-		if (!isStyleSet(&w->style, MG_RELATIVE_ARG)) {
+
+		if (isStyleSet(&w->style, MG_PROPWIDTH_ARG)) {
+			w->width = clampf(maxf(0, rw - w->style.paddingx*2) * w->style.width + w->style.paddingx*2, 0, rw);
+		} else if (isStyleSet(&w->style, MG_WIDTH_ARG)) {
+			w->width = w->style.width + w->style.paddingx*2;
+		} else {
+			w->width = w->cwidth + w->style.paddingx*2;
+		}
+
+		if (isStyleSet(&w->style, MG_PROPHEIGHT_ARG)) {
+			w->height = clampf(maxf(0, rh - w->style.paddingy*2) * w->style.height + w->style.paddingy*2, 0, rh);
+		} else if (isStyleSet(&w->style, MG_HEIGHT_ARG)) {
+			w->height = w->style.height + w->style.paddingy*2;
+		} else {
+			w->height = w->cheight + w->style.paddingy*2;
+		}
+
+		if (!isStyleSet(&w->style, MG_ANCHOR_ARG)) {
 			w->width = minf(rw, w->width);
 			w->height = minf(rh, w->height);
 		}
 	}
 
 	for (w = root->box.children; w != NULL; w = w->next) {
-		if (isStyleSet(&w->style, MG_RELATIVE_ARG)) {
-			unsigned char ax = w->style.relative & 0xf;
-			unsigned char ay = (w->style.relative >> 4) & 0xf;
-			w->x = root->x + root->style.paddingx + calcRelativeDelta(ax, w->style.relativex /* / 65535.0f*/, rw, w->width);
-			w->y = root->y + root->style.paddingy + calcRelativeDelta(ay, w->style.relativey /* / 65535.0f*/, rh, w->height);
+		if (isStyleSet(&w->style, MG_ANCHOR_ARG)) {
+			unsigned char ax = w->style.anchor & 0xf;
+			unsigned char ay = (w->style.anchor >> 4) & 0xf;
+
+			if (isStyleSet(&w->style, MG_PROPX_ARG))
+				w->x = root->x + root->style.paddingx + calcPropDelta(ax, w->style.x, rw, w->width);
+			else
+				w->x = root->x + root->style.paddingx + calcPosDelta(ax, w->style.x, rw, w->width);
+
+			if (isStyleSet(&w->style, MG_PROPY_ARG))
+				w->y = root->y + root->style.paddingy + calcPropDelta(ay, w->style.y, rh, w->height);
+			else
+				w->y = root->y + root->style.paddingy + calcPosDelta(ay, w->style.y, rh, w->height);
+
 			if (w->type == MG_BOX)
 				layoutWidgets(w);
 		}
@@ -1309,7 +1371,7 @@ static void layoutWidgets(struct MGwidget* root)
 	if (root->dir == MG_COL) {
 
 		for (w = root->box.children; w != NULL; w = w->next) {
-			if (isStyleSet(&w->style, MG_RELATIVE_ARG)) continue;
+			if (isStyleSet(&w->style, MG_ANCHOR_ARG)) continue;
 			sum += w->height;
 			if (w->next != NULL) sum += w->style.spacing;
 			ngrow += w->style.grow;
@@ -1321,7 +1383,7 @@ static void layoutWidgets(struct MGwidget* root)
 			avail = maxf(0, avail); 
 
 		for (w = root->box.children; w != NULL; w = w->next) {
-			if (isStyleSet(&w->style, MG_RELATIVE_ARG)) continue;
+			if (isStyleSet(&w->style, MG_ANCHOR_ARG)) continue;
 			w->x = x;
 			w->y = y;
 			if (ngrow > 0)
@@ -1351,7 +1413,7 @@ static void layoutWidgets(struct MGwidget* root)
 	} else {
 
 		for (w = root->box.children; w != NULL; w = w->next) {
-			if (isStyleSet(&w->style, MG_RELATIVE_ARG)) continue;
+			if (isStyleSet(&w->style, MG_ANCHOR_ARG)) continue;
 			sum += w->width;
 			if (w->next != NULL) sum += w->style.spacing;
 			ngrow += w->style.grow;
@@ -1363,7 +1425,7 @@ static void layoutWidgets(struct MGwidget* root)
 			avail = maxf(0, avail); 
 
 		for (w = root->box.children; w != NULL; w = w->next) {
-			if (isStyleSet(&w->style, MG_RELATIVE_ARG)) continue;
+			if (isStyleSet(&w->style, MG_ANCHOR_ARG)) continue;
 
 			w->x = x;
 			w->y = y;
@@ -1434,39 +1496,39 @@ struct MGopt* mgPackOptStr(unsigned char a, const char* s)
 	return opt;
 }
 
-/*
 static void dumpOpts(struct MGopt* opts)
 {
 	printf("opts = ");
 	for (; opts != NULL; opts = opts->next) {
 		switch (opts->type) {
-			case MG_OVERFLOW_ARG:		printf("overflow "); break;
-			case MG_ALIGN_ARG:			printf("align "); break;
-			case MG_GROW_ARG:			printf("grow "); break;
-			case MG_WIDTH_ARG:			printf("width "); break;
-			case MG_HEIGHT_ARG:			printf("height "); break;
-			case MG_PADDINGX_ARG:		printf("paddingx "); break;
-			case MG_PADDINGY_ARG:		printf("paddingy "); break;
-			case MG_SPACING_ARG:		printf("spacing "); break;
-			case MG_FONTSIZE_ARG:		printf("fontSize "); break;
-			case MG_TEXTALIGN_ARG:		printf("textAlign "); break;
-			case MG_LOGIC_ARG:			printf("logic "); break;
-			case MG_CONTENTCOLOR_ARG:	printf("contentColor "); break;
-			case MG_FILLCOLOR_ARG:		printf("fillColor "); break;
-			case MG_BORDERCOLOR_ARG:	printf("borderColor "); break;
-			case MG_BORDERSIZE_ARG:		printf("borderSize "); break;
-			case MG_CORNERRADIUS_ARG:	printf("cornerRadius "); break;
-			case MG_TAG_ARG:			printf("tag "); break;
-			case MG_PROPWIDTH_ARG:		printf("propWidth "); break;
-			case MG_PROPHEIGHT_ARG:		printf("propHeight "); break;
-			case MG_RELATIVE_ARG:		printf("relative "); break;
-			case MG_RELATIVEX_ARG:		printf("relativex "); break;
-			case MG_RELATIVEY_ARG:		printf("relativey "); break;
+			case MG_OVERFLOW_ARG:		printf("overflow=%d ", opts->ival); break;
+			case MG_ALIGN_ARG:			printf("align=%d ", opts->ival); break;
+			case MG_GROW_ARG:			printf("grow=%d ", opts->ival); break;
+			case MG_WIDTH_ARG:			printf("width=%f ", opts->fval); break;
+			case MG_HEIGHT_ARG:			printf("height=%f ", opts->fval); break;
+			case MG_PADDINGX_ARG:		printf("paddingx=%d ", opts->ival); break;
+			case MG_PADDINGY_ARG:		printf("paddingy=%d ", opts->ival); break;
+			case MG_SPACING_ARG:		printf("spacing=%d ", opts->ival); break;
+			case MG_FONTSIZE_ARG:		printf("fontSize=%d ", opts->ival); break;
+			case MG_TEXTALIGN_ARG:		printf("textAlign=%d ", opts->ival); break;
+			case MG_LOGIC_ARG:			printf("logic=%d ", opts->ival); break;
+			case MG_CONTENTCOLOR_ARG:	printf("contentColor=%08x ", opts->ival); break;
+			case MG_FILLCOLOR_ARG:		printf("fillColor=%08x ", opts->ival); break;
+			case MG_BORDERCOLOR_ARG:	printf("borderColor=%08x ", opts->ival); break;
+			case MG_BORDERSIZE_ARG:		printf("borderSize=%d ", opts->ival); break;
+			case MG_CORNERRADIUS_ARG:	printf("cornerRadius=%d ", opts->ival); break;
+			case MG_TAG_ARG:			printf("tag=%s ", opts->sval); break;
+			case MG_PROPWIDTH_ARG:		printf("pwidth=%f ", opts->fval); break;
+			case MG_PROPHEIGHT_ARG:		printf("pheight=%f ", opts->fval); break;
+			case MG_ANCHOR_ARG:			printf("anchor=%d ", opts->ival); break;
+			case MG_PROPX_ARG:			printf("px=%f ", opts->fval); break;
+			case MG_PROPY_ARG:			printf("py=%f ", opts->fval); break;
+			case MG_X_ARG:				printf("x=%f ", opts->fval); break;
+			case MG_Y_ARG:				printf("y=%f ", opts->fval); break;
 		}
 	}
 	printf("\n");
 }
-*/
 
 struct MGopt* mgOpts_(unsigned int dummy, ...)
 {
@@ -1507,32 +1569,46 @@ struct MGopt* mgOpts_(unsigned int dummy, ...)
 
 static void flattenStyle(struct MGstyle* style, struct MGopt* opts)
 {
+
+//	dumpOpts(opts);
+
 	for (; opts != NULL; opts = opts->next) {
+		unsigned int unset = 0;
 		switch (opts->type) {
 			case MG_OVERFLOW_ARG:		style->overflow = opts->ival; break;
 			case MG_ALIGN_ARG:			style->align = opts->ival; break;
 			case MG_GROW_ARG:			style->grow = opts->ival; break;
-			case MG_WIDTH_ARG:			style->width = opts->ival; break;
-			case MG_HEIGHT_ARG:			style->height = opts->ival; break;
+
+			case MG_WIDTH_ARG:			style->width = opts->fval; unset = 1 << MG_PROPWIDTH_ARG; break;
+			case MG_HEIGHT_ARG:			style->height = opts->fval; unset = 1 << MG_PROPHEIGHT_ARG; break;
+			case MG_PROPWIDTH_ARG:		style->width = opts->fval; unset = 1 << MG_WIDTH_ARG; break;
+			case MG_PROPHEIGHT_ARG:		style->height = opts->fval; unset = 1 << MG_HEIGHT_ARG; break;
+
+			case MG_X_ARG:				style->x = opts->fval; unset = 1 << MG_PROPX_ARG; break;
+			case MG_Y_ARG:				style->y = opts->fval; unset = 1 << MG_PROPY_ARG; break;
+			case MG_PROPX_ARG:			style->x = opts->fval; unset = 1 << MG_X_ARG; break;
+			case MG_PROPY_ARG:			style->y = opts->fval; unset = 1 << MG_Y_ARG; break;
+
 			case MG_PADDINGX_ARG:		style->paddingx = opts->ival; break;
 			case MG_PADDINGY_ARG:		style->paddingy = opts->ival; break;
 			case MG_SPACING_ARG:		style->spacing = opts->ival; break;
+
 			case MG_FONTSIZE_ARG:		style->fontSize = opts->ival; break;
 			case MG_TEXTALIGN_ARG:		style->textAlign = opts->ival; break;
+
 			case MG_LOGIC_ARG:			style->logic = opts->ival; break;
+
 			case MG_CONTENTCOLOR_ARG:	style->contentColor = opts->ival; break;
 			case MG_FILLCOLOR_ARG:		style->fillColor = opts->ival; break;
 			case MG_BORDERCOLOR_ARG:	style->borderColor = opts->ival; break;
 			case MG_BORDERSIZE_ARG:		style->borderSize = opts->ival; break;
 			case MG_CORNERRADIUS_ARG:	style->cornerRadius = opts->ival; break;
-			case MG_PROPWIDTH_ARG:		style->propWidth = opts->fval; break;
-			case MG_PROPHEIGHT_ARG:		style->propHeight = opts->fval; break;
-			case MG_RELATIVE_ARG:		style->relative = opts->ival; break;
-			case MG_RELATIVEX_ARG:		style->relativex = opts->fval; break;
-			case MG_RELATIVEY_ARG:		style->relativey = opts->fval; break;
+
+			case MG_ANCHOR_ARG:			style->anchor = opts->ival; break;
 		}
 		// Mark which properties has been set.
-		style->set |= 1 << (opts->type & 0xff);
+		style->set &= ~unset;
+		style->set |= 1 << opts->type;
 	}
 }
 
@@ -1831,8 +1907,7 @@ struct MGhit* mgPanelEnd()
 	struct MGwidget* w = popBox();
 	if (w != NULL) {
 		fitToContent(w);
-		w->width = w->style.width;
-		w->height = w->style.height;
+		applyPanelSize(w);
 		layoutWidgets(w);
 		state.previous = w;
 	}
@@ -1864,6 +1939,7 @@ struct MGhit* mgBoxEnd()
 	struct MGwidget* w = popBox();
 	if (w != NULL) {
 		fitToContent(w);
+		applySize(w);
 		state.previous = w;
 	}
 	popTag();
@@ -1881,22 +1957,11 @@ struct MGhit* mgText(const char* text, struct MGopt* opts)
 
 	w->text.text = allocText(text);
 
-//	printf("text state=%d\n", getState(w));
-
 	w->style = computeStyle(getState(w), mgOpts(mgTag("text"), opts));
-
 	textSize(w->text.text, w->style.fontSize, &tw, &th);
-	if (!isStyleSet(&w->style, MG_WIDTH_ARG)) {
-		w->style.width = tw;
-		w->style.set |= 1<<MG_WIDTH_ARG;
-	}
-	if (!isStyleSet(&w->style, MG_HEIGHT_ARG)) {
-		w->style.height = th;
-		w->style.set |= 1<<MG_HEIGHT_ARG;
-	}
-
-	w->style.width += w->style.paddingx*2;
-	w->style.height += w->style.paddingy*2;
+	w->cwidth = tw;
+	w->cheight = th;
+	applySize(w);
 
 	return hitResult(w);
 }
@@ -1909,10 +1974,10 @@ struct MGhit* mgIcon(int width, int height, struct MGopt* opts)
 		addChildren(parent, w);
 	state.previous = w;
 
-	w->style = computeStyle(getState(w), mgOpts(mgTag("icon"), mgWidth(width), mgHeight(height), opts));
-
-	w->style.width += w->style.paddingx*2;
-	w->style.height += w->style.paddingy*2;
+	w->style = computeStyle(getState(w), mgOpts(mgTag("icon"), opts));
+	w->cwidth = width;
+	w->cheight = height;
+	applySize(w);
 
 	return hitResult(w);
 }
@@ -1930,9 +1995,6 @@ struct MGhit* mgCanvas(MGcanvasLogicFun logic, MGcanvasRenderFun render, void* u
 	w->uptr = uptr;
 
 	w->style = computeStyle(getState(w), mgOpts(mgTag("canvas"), opts));
-
-	w->style.width += w->style.paddingx*2;
-	w->style.height += w->style.paddingy*2;
 
 	return hitResult(w);
 }
@@ -2018,15 +2080,11 @@ struct MGhit* mgSlider2(float* value, float vmin, float vmax, struct MGopt* opts
 	if (input == NULL)
 		return NULL;
 
-	opts = mgOpts(mgTag("slider"), mgWidth(DEFAULT_SLIDERW), opts);
+	opts = mgOpts(mgTag("slider"), opts);
 	comp = computeStyle(MG_NORMAL, opts);
-
-	if (!isStyleSet(&comp, MG_HEIGHT_ARG)) {
-		float th;
-		textSize(NULL, comp.fontSize, NULL, &th);
-		opts = mgOpts(mgHeight(th), opts);
-		comp.height = th;
-	}
+	float th;
+	textSize(NULL, comp.fontSize, NULL, &th);
+	opts = mgOpts(mgWidth(DEFAULT_SLIDERW), mgHeight(th), opts);
 
 	input->value = *value;
 	input->vmin = vmin;
@@ -2054,13 +2112,13 @@ struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGopt* opts)
 
 	mgBoxBegin(MG_ROW, mgOpts(mgLogic(MG_DRAG), mgTag("slider"), opts));
 
-		mgBoxBegin(MG_ROW, mgOpts(mgRelative(MG_JUSTIFY,MG_CENTER,0,0.5f), mgTag("slot"), mgPropWidth(1.0f)));
+		mgBoxBegin(MG_ROW, mgOpts(mgPropPosition(MG_JUSTIFY,MG_CENTER,0,0.5f), mgTag("slot"), mgPropWidth(1.0f)));
 		mgBoxEnd();
 
-		mgBoxBegin(MG_ROW, mgOpts(mgRelative(MG_START,MG_CENTER,0,0.5f), mgAlign(MG_CENTER), mgOverflow(MG_VISIBLE), mgTag("bar"), mgPropWidth(pc)));
+		mgBoxBegin(MG_ROW, mgOpts(mgPropPosition(MG_START,MG_CENTER,0,0.5f), mgAlign(MG_CENTER), mgOverflow(MG_VISIBLE), mgTag("bar"), mgPropWidth(pc)));
 		mgBoxEnd();
 
-		hopts = mgOpts(mgLogic(MG_DRAG), mgRelative(MG_JUSTIFY,MG_CENTER,pc,0.5f), mgTag("handle"));
+		hopts = mgOpts(mgLogic(MG_DRAG), mgPropPosition(MG_JUSTIFY,MG_CENTER,pc,0.5f), mgTag("handle"));
 		hstyle = computeStyle(MG_NORMAL, hopts);
 		hres = mgIcon(hstyle.width, hstyle.height, hopts);
 
@@ -2074,10 +2132,6 @@ struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGopt* opts)
 		float xmax = hres->pbounds[0] + hres->pbounds[2] - hstyle.width/2;
 		float xrange = maxf(1.0f, xmax - xmin);
 		if (hres->pressed) {
-/*			float u = (*value - vmin) / (vmax - vmin);
-			float x = xmin + u * (xmax - xmin);
-			float v = clampf((hres->mx - xmin) / xrange, 0.0f, 1.0f);
-			*value = clampf(vmin + v * (vmax - vmin), vmin, vmax);*/
 			state->value = *value;
 		}
 		if (hres->dragged) {
@@ -2111,7 +2165,7 @@ struct MGhit* mgProgress(float progress, struct MGopt* opts)
 {
 	float pc = clampf(progress, 0.0f, 1.0f);	
 	mgBoxBegin(MG_ROW, mgOpts(mgTag("progress"), opts));
-		mgBoxBegin(MG_ROW, mgOpts(mgRelative(MG_START,MG_JUSTIFY,0,0.5f), mgAlign(MG_CENTER), mgOverflow(MG_VISIBLE), mgTag("bar"), mgPropWidth(pc)));
+		mgBoxBegin(MG_ROW, mgOpts(mgPropPosition(MG_START,MG_JUSTIFY,0,0.5f), mgAlign(MG_CENTER), mgOverflow(MG_VISIBLE), mgTag("bar"), mgPropWidth(pc)));
 		mgBoxEnd();
 	return mgBoxEnd();
 }
@@ -2125,7 +2179,7 @@ struct MGhit* mgScrollBar(float* offset, float contentSize, float viewSize, stru
 	float pc = minf(1.0f, viewSize / maxf(1.0f, contentSize));
 
 	mgBoxBegin(MG_ROW, mgOpts(mgLogic(MG_DRAG), mgTag("scroll"), opts));
-		mgBoxBegin(MG_ROW, mgOpts(mgLogic(MG_DRAG), mgRelative(MG_JUSTIFY,MG_JUSTIFY,oc,0.5f), mgTag("bar"), mgPropWidth(pc)));
+		mgBoxBegin(MG_ROW, mgOpts(mgLogic(MG_DRAG), mgPropPosition(MG_JUSTIFY,MG_JUSTIFY,oc,0.5f), mgTag("bar"), mgPropWidth(pc)));
 		hres = mgBoxEnd();
 	res = mgBoxEnd();
 
@@ -2175,7 +2229,7 @@ struct MGhit* mgScrollBar(float* offset, float contentSize, float viewSize, stru
 
 struct MGhit* mgInput(char* text, int maxtext, struct MGopt* opts)
 {
-	float tw, th;
+	float th;
 	struct MGwidget* parent = getParent();
 	struct MGwidget* w = allocWidget(MG_INPUT);
 	if (parent != NULL)
@@ -2184,13 +2238,12 @@ struct MGhit* mgInput(char* text, int maxtext, struct MGopt* opts)
 	w->input.text = allocTextLen(text, maxtext);
 	w->input.maxtext = maxtext;
 
-	w->style = computeStyle(getState(w), mgOpts(mgTag("input"), mgWidth(DEFAULT_TEXTW), opts));
+	w->style = computeStyle(getState(w), mgOpts(mgTag("input"), opts));
 
-	textSize(NULL, w->style.fontSize, &tw,&th);
-	w->style.height = th;
-
-	w->style.width += w->style.paddingx*2;
-	w->style.height += w->style.paddingy*2;
+	textSize(NULL, w->style.fontSize, NULL, &th);
+	w->cwidth = DEFAULT_TEXTW;
+	w->cheight = th;
+	applySize(w);
 
 	return hitResult(w);
 }
@@ -2383,8 +2436,7 @@ struct MGhit* mgPopupEnd()
 		}
 
 		fitToContent(w);
-		w->width = w->style.width;
-		w->height = w->style.height;
+		applyPanelSize(w);
 		layoutWidgets(w);
 	}
 
