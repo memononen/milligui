@@ -421,6 +421,13 @@ float nvgTextBounds(struct NVGcontext* ctx, const char* string, const char* end,
 // Current transform does not affect the measured values.
 void nvgVertMetrics(struct NVGcontext* ctx, float* ascender, float* descender, float* lineh);
 
+struct NVGglyphPosition {
+	const char* str;
+	float x, width;
+};
+
+int nvgTextGlyphPositions(struct NVGcontext* ctx, float x, float y, const char* string, const char* end, float* bounds, struct NVGglyphPosition* positions, int maxPositions);
+
 
 //
 // Internal Render API

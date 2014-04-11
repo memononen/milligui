@@ -177,12 +177,12 @@ static void deleteIcons()
 #define MG_ID_STACK_SIZE 100
 #define MG_MAX_PANELS 100
 #define MG_MAX_TAGS 100
-#define MG_MAX_TRANSIENTS 100
+#define MG_TRANSIENT_POOL_SIZE 4096
 
-struct MGtransient {
+struct MGtransientHeader {
 	unsigned int id;
 	int counter;
-	unsigned char storage[128];
+	int size;
 };
 
 struct MGidRange {
@@ -221,7 +221,9 @@ struct MUIstate
 	const char* tags[MG_MAX_TAGS];
 	int tagCount;
 
-	struct MGtransient transients[MG_MAX_TRANSIENTS];
+//	struct MGtransient transients[MG_MAX_TRANSIENTS];
+	unsigned char transientMem[MG_TRANSIENT_POOL_SIZE];
+	int transientMemSize;
 	int transientCount;
 
 	struct NVGcontext* vg;
@@ -236,26 +238,47 @@ static struct MUIstate state;
 static unsigned char* allocTransient(unsigned int id, int size)
 {
 	int i;
-	struct MGtransient* trans;
-	if (size > 128) {
-		printf("too large transient size %d\n", size);
-		return NULL;
-	}
+	struct MGtransientHeader* trans;
+	unsigned char* ptr;
+	unsigned char* prev = NULL;
+	int prevSize = 0;
+	int allocSize = sizeof(struct MGtransientHeader) + size;
+
 	// Check if the transient exists.
+	ptr = state.transientMem;
 	for (i = 0; i < state.transientCount; i++) {
-		if (state.transients[i].id == id) {
-			state.transients[i].counter++;
-			return state.transients[i].storage;
+		trans = (struct MGtransientHeader*)ptr;
+		if (trans->id == id) {
+			if (trans->size != size) {
+				allocSize = sizeof(struct MGtransientHeader) + maxi(trans->size, size);
+				prev = ptr;
+				break;
+			}
+			trans->counter = 1; // touch
+			return ptr + sizeof(struct MGtransientHeader);
 		}
+		ptr += sizeof(struct MGtransientHeader) + trans->size; 
 	}
-	// Could not found, add new.
-	if (state.transientCount >= MG_MAX_TRANSIENTS)
+
+	if ((state.transientMemSize + allocSize) > MG_TRANSIENT_POOL_SIZE) {
 		return NULL;
-	trans = &state.transients[state.transientCount++];
-	memset(trans, 0, sizeof(*trans));
+	}
+
+	// Allocate new block
+	ptr = &state.transientMem[state.transientMemSize];
+	state.transientMemSize += allocSize; 
+	if (prev != NULL)
+		memcpy(ptr, prev, allocSize);
+	else
+		memset(ptr, 0, allocSize);
+	trans = (struct MGtransientHeader*)ptr;
 	trans->id = id;
 	trans->counter = 1;
-	return trans->storage;
+	trans->size = size;
+
+	state.transientCount++;
+
+	return ptr + sizeof(struct MGtransientHeader);
 }
 
 static void addPanel(struct MGwidget* w, int zidx)
@@ -1248,18 +1271,33 @@ static void drawRect(struct MGwidget* w)
 
 static void drawText(struct MGwidget* w)
 {
+//	float bounds[4];
+//	struct NVGglyphPosition pos[100];
+//	int npos = 0, i;
+
 	nvgFillColor(state.vg, nvgCol(w->style.contentColor));
 	nvgFontSize(state.vg, w->style.fontSize);
 	if (w->style.textAlign == MG_CENTER) {
 		nvgTextAlign(state.vg, NVG_ALIGN_CENTER|NVG_ALIGN_MIDDLE);
+//		npos = nvgTextGlyphPositions(state.vg, w->x + w->width/2, w->y + w->height/2, w->text.text, NULL, bounds, pos, 100);
 		nvgText(state.vg, w->x + w->width/2, w->y + w->height/2, w->text.text, NULL);
 	} else if (w->style.textAlign == MG_END) {
 		nvgTextAlign(state.vg, NVG_ALIGN_RIGHT|NVG_ALIGN_MIDDLE);
+//		npos = nvgTextGlyphPositions(state.vg, w->x + w->width - w->style.paddingx, w->y + w->height/2, w->text.text, NULL, bounds, pos, 100);
 		nvgText(state.vg, w->x + w->width - w->style.paddingx, w->y + w->height/2, w->text.text, NULL);
 	} else {
 		nvgTextAlign(state.vg, NVG_ALIGN_LEFT|NVG_ALIGN_MIDDLE);
+//		npos = nvgTextGlyphPositions(state.vg, w->x + w->style.paddingx, w->y + w->height/2, w->text.text, NULL, bounds, pos, 100);
 		nvgText(state.vg, w->x + w->style.paddingx, w->y + w->height/2, w->text.text, NULL);
 	}
+
+/*	nvgFillColor(state.vg, nvgRGBA(255,0,0,64));
+	for (i = 0; i < npos; i++) {
+		struct NVGglyphPosition* p = &pos[i];
+		nvgBeginPath(state.vg);
+		nvgRect(state.vg, p->x, bounds[1], p->width, bounds[3]-bounds[1]);
+		nvgFill(state.vg);
+	}*/
 }
 
 struct MGparagraphRow {
@@ -1531,14 +1569,25 @@ static void drawPanels(const float* bounds)
 static void cleanUpTransients()
 {
 	int i, n = 0;
+	struct MGtransientHeader* trans;
+	unsigned char* ptr;
+	unsigned char* tail;
+
+	// Check if the transient exists.
+	ptr = tail = state.transientMem;
+
 	for (i = 0; i < state.transientCount; i++) {
-		state.transients[i].counter--;
-		if (state.transients[i].counter >= 0) {
-			if (n < i)
-				state.transients[n] = state.transients[i];
+		trans = (struct MGtransientHeader*)ptr;
+		trans->counter--;
+		if (trans->counter >= 0) {
+			int size = sizeof(struct MGtransientHeader) + trans->size;
+			memmove(tail, ptr, size);
+			tail += size;
 			n++;
 		}
+		ptr += sizeof(struct MGtransientHeader) + trans->size; 
 	}
+	state.transientMemSize = (int)(tail - state.transientMem);
 	state.transientCount = n;
 }
 

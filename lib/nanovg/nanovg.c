@@ -1985,6 +1985,62 @@ float nvgText(struct NVGcontext* ctx, float x, float y, const char* string, cons
 	return iter.x;
 }
 
+struct NVGglyphBounds {
+	const char* s;
+	float x0,y0,x1,y1;
+};
+
+/*struct NVGglyphPosition {
+	const char* str;
+	float x, width;
+};*/
+
+int nvgTextGlyphPositions(struct NVGcontext* ctx, float x, float y, const char* string, const char* end, float* bounds, struct NVGglyphPosition* positions, int maxPositions)
+{
+	struct NVGstate* state = nvg__getState(ctx);
+	struct FONStextIter iter;
+	struct FONSquad q;
+	int npos = 0;
+	float minx, miny, maxx, maxy;
+
+	if (end == NULL)
+		end = string + strlen(string);
+
+	if (state->fontId == FONS_INVALID) return 0;
+
+	fonsSetSize(ctx->fs, state->fontSize);
+	fonsSetSpacing(ctx->fs, state->letterSpacing);
+	fonsSetBlur(ctx->fs, state->fontBlur);
+	fonsSetAlign(ctx->fs, state->textAlign);
+	fonsSetFont(ctx->fs, state->fontId);
+
+	minx = maxx = x;
+	miny = maxy = y;
+
+	fonsTextIterInit(ctx->fs, &iter, x, y, string, end);
+	while (fonsTextIterNext(ctx->fs, &iter, &q)) {
+		if (positions && npos < maxPositions) {
+			positions[npos].str = iter.str;
+			positions[npos].x = q.x0;
+			positions[npos].width = q.x1 - q.x0;
+			minx = nvg__minf(minx, q.x0);
+			miny = nvg__minf(miny, q.y0);
+			maxx = nvg__maxf(maxx, q.x1);
+			maxy = nvg__maxf(maxy, q.y1);
+			npos++;
+		}
+	}
+
+	if (bounds) {
+		bounds[0] = minx;
+		bounds[1] = miny;
+		bounds[2] = maxx;
+		bounds[3] = maxy;
+	}
+
+	return npos;
+}
+
 float nvgTextBounds(struct NVGcontext* ctx, const char* string, const char* end, float* bounds)
 {
 	struct NVGstate* state = nvg__getState(ctx);
