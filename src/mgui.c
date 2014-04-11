@@ -784,6 +784,8 @@ static struct MGwidget* hitTest(struct MGwidget* box, const float* bounds)
 			break;
 		case MG_TEXT:
 			break;
+		case MG_PARAGRAPH:
+			break;
 		case MG_ICON:
 			break;
 		case MG_INPUT:
@@ -961,20 +963,30 @@ static void updateLogic(const float* bounds)
 		active->logic(active->uptr, active, &state.result);
 }
 
+static struct NVGcolor nvgCol(unsigned int col)
+{
+	struct NVGcolor c;
+	c.r = (col & 0xff) / 255.0f;
+	c.g = ((col >> 8) & 0xff) / 255.0f;
+	c.b = ((col >> 16) & 0xff) / 255.0f;
+	c.a = ((col >> 24) & 0xff) / 255.0f;
+	return c;
+}
+
 static void drawDebugRect(struct MGwidget* w)
 {
 	// round
-	nvgBeginPath(state.vg);
+/*	nvgBeginPath(state.vg);
 	nvgRect(state.vg, w->x + w->style.paddingx+0.5f, w->y + w->style.paddingy+0.5f, w->width - w->style.paddingx*2, w->height - w->style.paddingy*2);
 	nvgStrokeWidth(state.vg, 1.0f);
 	nvgStrokeColor(state.vg, nvgRGBA(255,0,0,128));
-	nvgStroke(state.vg);
+	nvgStroke(state.vg);*/
 
-/*	nvgBeginPath(state.vg);
-	nvgRect(state.vg, x+w->style.paddingx+0.5f, y+w->style.paddingy+0.5f, w->cwidth, w->cheight);
+	nvgBeginPath(state.vg);
+	nvgRect(state.vg, w->x + w->style.paddingx+0.5f, w->y + w->style.paddingy+0.5f, w->cwidth, w->cheight);
 	nvgStrokeWidth(state.vg, 1.0f);
 	nvgStrokeColor(state.vg, nvgRGBA(255,255,0,128));
-	nvgStroke(state.vg);*/
+	nvgStroke(state.vg);
 }
 
 static void drawRect(struct MGwidget* w)
@@ -992,7 +1004,7 @@ static void drawRect(struct MGwidget* w)
 		} else {
 			nvgRect(state.vg, x, y, width, height);
 		}
-		nvgFillColor(state.vg, w->style.fillColor);
+		nvgFillColor(state.vg, nvgCol(w->style.fillColor));
 		nvgFill(state.vg);
 	}
 
@@ -1005,14 +1017,14 @@ static void drawRect(struct MGwidget* w)
 			nvgRect(state.vg, x+s, y+s, width-s*2, height-s*2);
 		}
 		nvgStrokeWidth(state.vg, w->style.borderSize);
-		nvgStrokeColor(state.vg, w->style.borderColor);
+		nvgStrokeColor(state.vg, nvgCol(w->style.borderColor));
 		nvgStroke(state.vg);
 	}
 }
 
 static void drawText(struct MGwidget* w)
 {
-	nvgFillColor(state.vg, w->style.contentColor);
+	nvgFillColor(state.vg, nvgCol(w->style.contentColor));
 	nvgFontSize(state.vg, w->style.fontSize);
 	if (w->style.textAlign == MG_CENTER) {
 		nvgTextAlign(state.vg, NVG_ALIGN_CENTER|NVG_ALIGN_MIDDLE);
@@ -1023,6 +1035,126 @@ static void drawText(struct MGwidget* w)
 	} else {
 		nvgTextAlign(state.vg, NVG_ALIGN_LEFT|NVG_ALIGN_MIDDLE);
 		nvgText(state.vg, w->x + w->style.paddingx, w->y + w->height/2, w->text.text, NULL);
+	}
+}
+
+struct MGparagraphRow {
+	const char* start;
+	const char* end;
+};
+
+static int flowParagraph(const char* str, float size, float maxw, struct MGparagraphRow* rows, int maxRows)
+{
+	int i, n = 0;
+	float tw, x = 0;
+	const char* rstart = str;
+	const char* wstart = str;
+	const char* wend = str;
+
+	// Split input string into words, and arrange them on lines.
+	while (*wend) {
+		int nl = 0;
+		// Find end of word, new line or end of string
+		while (*wend) {
+			if (*wend == ' ' || *wend == '\t') {
+				nl = 0;
+				break;
+			} else if (*wend == '\n' || *wend == '\r') {
+				if (wend[0] != wend[1] && (wend[1] == '\n' || wend[1] == '\r')) wend++;
+				nl = 1;
+				break;
+			}
+			wend++;
+		}
+		// Step over delimiter.
+		if (*wend) wend++;
+
+		tw = nvgTextBounds(state.vg, wstart, wend, NULL);
+
+		if (x+tw > maxw) {
+			if (n < maxRows) {
+				rows[n].start = rstart;
+				rows[n].end = wstart;
+				n++;
+			}
+			rstart = wstart;
+			x = 0;
+		}
+		if (nl == 1) {
+			// Forced break.
+			if (n < maxRows) {
+				rows[n].start = rstart;
+				rows[n].end = wend;
+				n++;
+			}
+			rstart = wend;
+			x = 0;
+		} else {
+			x += tw;
+		}
+
+		wstart = wend;
+	}
+
+	if (n < maxRows && rstart != wend) {
+		rows[n].start = rstart;
+		rows[n].end = wend;
+		n++;
+	}
+
+/*	printf("rows:\n");
+	for (i = 0; i < n; i++) {
+		const char* s = rows[i].start;
+		const char* e = rows[i].end;
+		printf("> ");
+		for (; s != e; s++)
+			printf("%c", *s);
+		printf("\n");
+	}*/
+
+	return n;
+}
+
+static void drawParagraph(struct MGwidget* w)
+{
+	struct MGparagraphRow rows[64];
+	float th = 0;
+	float y = w->y + w->style.paddingy;
+	int i, n = 0;
+
+	nvgFillColor(state.vg, nvgCol(w->style.contentColor));
+	nvgFontSize(state.vg, w->style.fontSize);
+
+	n = flowParagraph(w->text.text, w->style.fontSize, w->width, rows, 64);
+	nvgVertMetrics(state.vg, NULL, NULL, &th);
+	if (n == 0) return;
+	if (w->style.lineHeight > 0)
+		th *= w->style.lineHeight;
+
+	if (w->style.textAlign == MG_CENTER)
+		nvgTextAlign(state.vg, NVG_ALIGN_CENTER|NVG_ALIGN_MIDDLE);
+	else if (w->style.textAlign == MG_END)
+		nvgTextAlign(state.vg, NVG_ALIGN_RIGHT|NVG_ALIGN_MIDDLE);
+	else
+		nvgTextAlign(state.vg, NVG_ALIGN_LEFT|NVG_ALIGN_MIDDLE);
+
+	y += th/2;
+
+	for (i = 0; i < n; i++) {
+		const char* start = rows[i].start;
+		const char* end = rows[i].end;
+/*		const char* s = start;
+		printf("> ");
+		for (; s != end; s++) printf("%c", *s);
+		printf("\n");*/
+
+		if (w->style.textAlign == MG_CENTER)
+			nvgText(state.vg, w->x + w->width/2, y, start, end);
+		else if (w->style.textAlign == MG_END)
+			nvgText(state.vg, w->x + w->width - w->style.paddingx, y, start, end);
+		else
+			nvgText(state.vg, w->x + w->style.paddingx, y, start, end);
+		y += th;
 	}
 }
 
@@ -1078,6 +1210,16 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 				if (wbounds[2] > 0.0f && wbounds[3] > 0.0f) {
 					nvgScissor(state.vg, (int)wbounds[0], (int)wbounds[1], (int)wbounds[2], (int)wbounds[3]);
 					drawText(w);
+				}
+				break;
+
+			case MG_PARAGRAPH:
+				drawRect(w);
+				if (debug) drawDebugRect(w);
+				isectBounds(wbounds, bbounds, w->x, w->y, w->width, w->height);
+				if (wbounds[2] > 0.0f && wbounds[3] > 0.0f) {
+					nvgScissor(state.vg, (int)wbounds[0], (int)wbounds[1], (int)wbounds[2], (int)wbounds[3]);
+					drawParagraph(w);
 				}
 				break;
 
@@ -1230,11 +1372,70 @@ static void textSize(const char* str, float size, float* w, float* h)
 	if (h) *h = th;
 }
 
+
+static void paragraphSize(const char* str, float size, float lineh, float maxw, float* w, float* h)
+{
+	struct MGparagraphRow rows[64];
+	int n;
+	float tw, th, th2;
+	if (state.vg == NULL) {
+		*w = *h = 0;
+		return;
+	}
+	nvgFontFace(state.vg, "sans");
+	nvgFontSize(state.vg, size);
+
+	n = flowParagraph(str, size, maxw, rows, 64);
+	if (n == 0) {
+		*w = *h = 0;
+		return;
+	}
+
+	nvgVertMetrics(state.vg, NULL, NULL, &th);
+	th2 = th;
+	if (lineh > 0.0f)
+		th2 *= lineh;
+
+	if (w) *w = maxw;
+	if (h) *h = (n-1) * th2 + th;
+}
+
+static void applySize(struct MGwidget* w)
+{
+	if (isStyleSet(&w->style, MG_WIDTH_ARG)) // && w->style.width != MG_AUTO_SIZE)
+		w->cwidth = w->style.width;
+	if (isStyleSet(&w->style, MG_HEIGHT_ARG)) // && w->style.height != MG_AUTO_SIZE)
+		w->cheight = w->style.height;
+}
+
+static void applyPanelSize(struct MGwidget* w)
+{
+	w->width = w->cwidth;
+	w->height = w->cheight;
+
+	if (isStyleSet(&w->style, MG_WIDTH_ARG) && w->style.width != MG_AUTO_SIZE)
+		w->width = w->style.width;
+	if (isStyleSet(&w->style, MG_HEIGHT_ARG) && w->style.height != MG_AUTO_SIZE)
+		w->height = w->style.height;
+
+	w->width += w->style.paddingx*2;
+	w->height += w->style.paddingy*2;
+	// Prop size is not used.
+}
+
 static void fitToContent(struct MGwidget* root)
 {
 	struct MGwidget* w = NULL;
 	float width = 0;
 	float height = 0;
+
+	for (w = root->box.children; w != NULL; w = w->next) {
+		if (isStyleSet(&w->style, MG_ANCHOR_ARG)) continue;
+		if (w->type == MG_BOX) {
+			fitToContent(w);
+			applySize(w);
+		}
+	}
 
 	if (root->dir == MG_COL) {
 		for (w = root->box.children; w != NULL; w = w->next) {
@@ -1278,35 +1479,13 @@ static float calcPosDelta(unsigned char align, float x, float psize, float wsize
 	return 0;
 }
 
-static void applySize(struct MGwidget* w)
-{
-	if (isStyleSet(&w->style, MG_WIDTH_ARG) && w->style.width != MG_AUTO_SIZE)
-		w->cwidth = w->style.width;
-	if (isStyleSet(&w->style, MG_HEIGHT_ARG) && w->style.height != MG_AUTO_SIZE)
-		w->cheight = w->style.height;
-}
-
-static void applyPanelSize(struct MGwidget* w)
-{
-	w->width = w->cwidth;
-	w->height = w->cheight;
-
-	if (isStyleSet(&w->style, MG_WIDTH_ARG) && w->style.width != MG_AUTO_SIZE)
-		w->width = w->style.width;
-	if (isStyleSet(&w->style, MG_HEIGHT_ARG) && w->style.height != MG_AUTO_SIZE)
-		w->height = w->style.height;
-
-	w->width += w->style.paddingx*2;
-	w->height += w->style.paddingy*2;
-	// Prop size is not used.
-}
-
-static void layoutWidgets(struct MGwidget* root)
+static int layoutWidgets(struct MGwidget* root)
 {
 	struct MGwidget* w = NULL;
 	float x, y, rw, rh;
 	float sum = 0, avail = 0;
 	int ngrow = 0, nitems = 0;
+	int reflow = 0;
 
 	x = root->x + root->style.paddingx;
 	y = root->y + root->style.paddingy;
@@ -1324,6 +1503,7 @@ static void layoutWidgets(struct MGwidget* root)
 		}
 	}
 
+	// Calculate desired sizes of the boxes.
 	for (w = root->box.children; w != NULL; w = w->next) {
 
 		if (isStyleSet(&w->style, MG_PROPWIDTH_ARG)) {
@@ -1343,11 +1523,35 @@ static void layoutWidgets(struct MGwidget* root)
 		}
 
 		if (!isStyleSet(&w->style, MG_ANCHOR_ARG)) {
+			// Handle justify align already here.
+			if (root->style.align == MG_JUSTIFY) {
+				if (root->dir == MG_COL)
+					w->width = rw;
+				else
+					w->height = rh;
+			}
 			w->width = minf(rw, w->width);
 			w->height = minf(rh, w->height);
 		}
 	}
 
+	// Reflow multi-line text if needed
+	for (w = root->box.children; w != NULL; w = w->next) {
+		float tw, th;
+		if (w->type != MG_PARAGRAPH) continue;
+		// Apply to columns only
+		if (w->parent != NULL && w->parent->dir != MG_COL) continue;
+		// Apply only if height is not set.
+		if (isStyleSet(&w->style, MG_PROPHEIGHT_ARG) || isStyleSet(&w->style, MG_HEIGHT_ARG)) continue;
+		// Recalc paragraph size based on new width.
+		paragraphSize(w->text.text, w->style.fontSize, w->style.lineHeight, w->width, &tw, &th);
+		w->cwidth = w->width;
+		w->cheight = th;
+		w->height = w->cheight + w->style.paddingy*2;
+		reflow |= 1;
+	}
+
+	// Layout anchored widgets
 	for (w = root->box.children; w != NULL; w = w->next) {
 		if (isStyleSet(&w->style, MG_ANCHOR_ARG)) {
 			unsigned char ax = w->style.anchor & 0xf;
@@ -1364,10 +1568,11 @@ static void layoutWidgets(struct MGwidget* root)
 				w->y = root->y + root->style.paddingy + calcPosDelta(ay, w->style.y, rh, w->height);
 
 			if (w->type == MG_BOX)
-				layoutWidgets(w);
+				reflow |= layoutWidgets(w);
 		}
 	}
 
+	// Layout box model widgets
 	if (root->dir == MG_COL) {
 
 		for (w = root->box.children; w != NULL; w = w->next) {
@@ -1398,16 +1603,13 @@ static void layoutWidgets(struct MGwidget* root)
 			case MG_CENTER:
 				w->x += rw/2 - w->width/2;
 				break;
-			case MG_JUSTIFY:
-				w->width = rw;
-				break;
-			default: // MG_START
+			default: // MG_START and MG_JUSTIFY
 				break;
 			}
 			y += w->height + w->style.spacing;
 
 			if (w->type == MG_BOX)
-				layoutWidgets(w);
+				reflow |= layoutWidgets(w);
 		}
 
 	} else {
@@ -1442,23 +1644,34 @@ static void layoutWidgets(struct MGwidget* root)
 			case MG_CENTER:
 				w->y += rh/2 - w->height/2;
 				break;
-			case MG_JUSTIFY:
-				w->height = rh;
-				break;
-			default: // MG_START
+			default: // MG_START and MG_JUSTIFY
 				break;
 			}
 
 			x += w->width + w->style.spacing;
 
 			if (w->type == MG_BOX)
-				layoutWidgets(w);
+				reflow |= layoutWidgets(w);
 		}
-
 	}
+
+	return reflow;
 }
 
-
+static void layoutPanel(struct MGwidget* w)
+{
+	int reflow = 0;
+	// Do first pass on layout, most things anre handled here.
+	fitToContent(w);
+	applyPanelSize(w);
+	reflow = layoutWidgets(w);
+	// If the layout had paragraphs, we'll need to reflow because the height may have changed.
+	if (reflow) {
+		fitToContent(w);
+		applyPanelSize(w);
+		layoutWidgets(w);
+	}
+}
 
 struct MGopt* mgPackOpt(unsigned char a, int v)
 {
@@ -1511,6 +1724,7 @@ static void dumpOpts(struct MGopt* opts)
 			case MG_SPACING_ARG:		printf("spacing=%d ", opts->ival); break;
 			case MG_FONTSIZE_ARG:		printf("fontSize=%d ", opts->ival); break;
 			case MG_TEXTALIGN_ARG:		printf("textAlign=%d ", opts->ival); break;
+			case MG_LINEHEIGHT_ARG:		printf("lineHeight=%f ", opts->fval); break;
 			case MG_LOGIC_ARG:			printf("logic=%d ", opts->ival); break;
 			case MG_CONTENTCOLOR_ARG:	printf("contentColor=%08x ", opts->ival); break;
 			case MG_FILLCOLOR_ARG:		printf("fillColor=%08x ", opts->ival); break;
@@ -1595,6 +1809,7 @@ static void flattenStyle(struct MGstyle* style, struct MGopt* opts)
 
 			case MG_FONTSIZE_ARG:		style->fontSize = opts->ival; break;
 			case MG_TEXTALIGN_ARG:		style->textAlign = opts->ival; break;
+			case MG_LINEHEIGHT_ARG:		style->lineHeight = opts->fval; break;
 
 			case MG_LOGIC_ARG:			style->logic = opts->ival; break;
 
@@ -1906,9 +2121,7 @@ struct MGhit* mgPanelEnd()
 	popTag();
 	struct MGwidget* w = popBox();
 	if (w != NULL) {
-		fitToContent(w);
-		applyPanelSize(w);
-		layoutWidgets(w);
+		layoutPanel(w);
 		state.previous = w;
 	}
 
@@ -1938,11 +2151,33 @@ struct MGhit* mgBoxEnd()
 {
 	struct MGwidget* w = popBox();
 	if (w != NULL) {
-		fitToContent(w);
-		applySize(w);
+//		fitToContent(w);
+//		applySize(w);
 		state.previous = w;
 	}
 	popTag();
+	return hitResult(w);
+}
+
+struct MGhit* mgParagraph(const char* text, struct MGopt* opts)
+{
+	float tw, th;
+	struct MGwidget* parent = getParent();
+	struct MGwidget* w = allocWidget(MG_PARAGRAPH);
+	if (parent != NULL)
+		addChildren(parent, w);
+	state.previous = w;
+
+	w->text.text = allocText(text);
+
+	w->style = computeStyle(getState(w), mgOpts(mgTag("text"), opts));
+
+	textSize(NULL, w->style.fontSize, NULL, &th);
+	paragraphSize(w->text.text, w->style.fontSize, w->style.lineHeight, th*20, &tw, &th);
+	w->cwidth = tw;
+	w->cheight = th;
+	applySize(w);
+
 	return hitResult(w);
 }
 
@@ -2029,7 +2264,7 @@ static void sliderDraw(void* uptr, struct MGwidget* w, struct NVGcontext* vg, co
 	if (isStyleSet(&w->style, MG_FILLCOLOR_ARG)) {
 		nvgBeginPath(vg);
 		nvgCircle(vg, x, w->y+w->height/2, hr);
-		nvgFillColor(vg, w->style.fillColor);
+		nvgFillColor(vg, nvgCol(w->style.fillColor));
 		nvgFill(vg);
 	}
 
@@ -2038,7 +2273,7 @@ static void sliderDraw(void* uptr, struct MGwidget* w, struct NVGcontext* vg, co
 		nvgBeginPath(vg);
 		nvgCircle(vg, x, w->y+w->height/2, hr-s);
 		nvgStrokeWidth(vg, w->style.borderSize);
-		nvgStrokeColor(vg, w->style.borderColor);
+		nvgStrokeColor(vg, nvgCol(w->style.borderColor));
 		nvgStroke(vg);
 	}
 }
@@ -2435,9 +2670,7 @@ struct MGhit* mgPopupEnd()
 			}
 		}
 
-		fitToContent(w);
-		applyPanelSize(w);
-		layoutWidgets(w);
+		layoutPanel(w);
 	}
 
 	return hitResult(w);

@@ -206,11 +206,13 @@ int main()
 				mgItem("Tabs", mgOpts());
 			mgPopupEnd();
 
+//			mgParagraph("This is longer chunk of text.\nWould have used lorem ipsum but she was busy jumping over the lazy dog with the fox and all the men who came to the aid of the party.", mgOpts(mgFontSize(12)));
+
 		mgPanelEnd();
 
 //		mgBeginPanel("NavMesh Options", 20,50, 250, MG_AUTO, MG_COL, MG_JUSTIFY, 0, 5);
 //		mgBeginPanel("NavMesh Options", 20,50, 250, winHeight - 50, MG_COL, MG_JUSTIFY, MG_SCROLL, 5,5);
-		mgPanelBegin(MG_COL, 20,50, 0, mgOpts(mgWidth(250), mgHeight(MG_AUTO_SIZE), mgTag("dialog"), mgAlign(MG_JUSTIFY), mgOverflow(MG_SCROLL), mgPadding(10,10)));
+		mgPanelBegin(MG_COL, 20,50, 0, mgOpts(mgWidth(250), /*mgHeight(MG_AUTO_SIZE),*/ mgTag("dialog"), mgAlign(MG_JUSTIFY), mgOverflow(MG_SCROLL), mgPadding(10,10)));
 
 //		mgText("NavMesh Options", );
 
@@ -237,7 +239,14 @@ int main()
 			printf("Build!!\n");
 		}
 
-		mgProgress(sqr(sinf(glfwGetTime()*0.3f)), mgOpts());
+		mgBoxBegin(MG_ROW, mgOpts());
+			mgBoxBegin(MG_COL, mgOpts(mgGrow(1), mgSpacing(5), mgAlign(MG_JUSTIFY)));
+				mgParagraph("This is longer chunk of text.\nWould have used lorem ipsum but she was busy jumping over the lazy dog with the fox and all the men who came to the aid of the party.", mgOpts());
+			mgBoxEnd();
+			mgButton("Build4", mgOpts());
+		mgBoxEnd();
+
+/*		mgProgress(sqr(sinf(glfwGetTime()*0.3f)), mgOpts());
 
 //		scroll = (200 - 45) * sqr(sinf(glfwGetTime()*0.3f));
 		mgScrollBar(&scroll, 200, 45, mgOpts());
@@ -249,9 +258,13 @@ int main()
 				mgButton("Build3", mgOpts());
 			mgBoxEnd();
 			mgButton("Build4", mgOpts());
-		mgBoxEnd();
+		mgBoxEnd();*/
 
+		mgPanelEnd();
 
+		mgPanelBegin(MG_COL, winWidth-40-150, 50, 0, mgOpts(mgWidth(150), mgTag("dialog"), mgAlign(MG_JUSTIFY), mgOverflow(MG_SCROLL), mgPadding(10,10)));
+		mgParagraph("Headline with verylingtestindeed", mgOpts(mgFontSize(32), mgLineHeight(0.8f)));
+		mgParagraph("This is longer chunk of text.\nWould have used lorem ipsum but she was busy jumping over the lazy dog with the fox and all the men who came to the aid of the party.", mgOpts());
 		mgPanelEnd();
 
 		mgFrameEnd();

@@ -45,6 +45,7 @@ enum MGargTypes {
 	MG_ALIGN_ARG,
 	MG_OVERFLOW_ARG,		// 10
 	MG_FONTSIZE_ARG,
+	MG_LINEHEIGHT_ARG,
 	MG_TEXTALIGN_ARG,
 	MG_LOGIC_ARG,
 	MG_STYLE_ARG,
@@ -86,6 +87,7 @@ enum MGlogicType {
 
 #define mgFontSize(v)			(mgPackOpt(MG_FONTSIZE_ARG, (v)))
 #define mgTextAlign(v)			(mgPackOpt(MG_TEXTALIGN_ARG, (v)))
+#define mgLineHeight(v)			(mgPackOptf(MG_LINEHEIGHT_ARG, (v)))
 
 #define mgLogic(v)				(mgPackOpt(MG_LOGIC_ARG, (v)))
 
@@ -132,6 +134,7 @@ struct MGstyle {
 
 	unsigned char fontSize;
 	unsigned char textAlign;
+	float lineHeight;
 
 	unsigned char logic;
 
@@ -165,6 +168,7 @@ struct MGhit {
 
 enum MGwidgetType {
 	MG_BOX,
+	MG_PARAGRAPH,
 	MG_TEXT,
 	MG_ICON,
 	MG_INPUT,
@@ -193,8 +197,10 @@ struct MGwidget {
 	unsigned char dir;
 	unsigned char type;
 	unsigned char state;
+
 	unsigned char active;
 	unsigned char bubble;
+
 	union {
 		struct {
 			char* text;
@@ -226,6 +232,7 @@ struct MGhit* mgBoxBegin(int dir, struct MGopt* opts);
 struct MGhit* mgBoxEnd();
 
 struct MGhit* mgText(const char* text, struct MGopt* opts);
+struct MGhit* mgParagraph(const char* text, struct MGopt* opts);
 struct MGhit* mgIcon(int width, int height, struct MGopt* opts);
 struct MGhit* mgInput(char* text, int maxtext, struct MGopt* opts);
 
