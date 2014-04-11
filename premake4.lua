@@ -10,7 +10,7 @@ solution "mgui"
 		kind "ConsoleApp"
 		language "C"
 		files { "example/example.c", "src/*", "lib/nanovg/*" }
-		includedirs { "src", "lib/nanovg" }
+		includedirs { "src", "lib/nanovg", "lib/nanosvg" }
 		targetdir("build")
 	 
 		configuration { "linux" }

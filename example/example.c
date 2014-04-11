@@ -102,16 +102,30 @@ int main()
 		printf("Could not init nanovg.\n");
 		return -1;
 	}
-	if (nvgCreateFont(vg, "sans", "../example/Roboto-Regular.ttf") == -1) {
+	if (nvgCreateFont(vg, "sans", "../example/fonts/Roboto-Regular.ttf") == -1) {
 		printf("Could not add font italic.\n");
 		return -1;
 	}
-	if (nvgCreateFont(vg, "sans-bold", "../example/Roboto-Bold.ttf") == -1) {
+	if (nvgCreateFont(vg, "sans-bold", "../example/fonts/Roboto-Bold.ttf") == -1) {
 		printf("Could not add font bold.\n");
 		return -1;
 	}
 
 	mgInit();
+
+	if (mgCreateIcon("check", "../example/icons/check.svg")) {
+		printf("Could not create icon 'check'.\n");
+		return -1;
+	}
+	if (mgCreateIcon("arrow-combo", "../example/icons/arrow-combo.svg")) {
+		printf("Could not create icon 'arrow-combo'.\n");
+		return -1;
+	}
+	if (mgCreateIcon("tools", "../example/icons/tools.svg")) {
+		printf("Could not create icon 'tool'.\n");
+		return -1;
+	}
+
 
 	mgCreateStyle("menubar", mgOpts(
 		mgFillColor(255,255,255,32)
@@ -235,23 +249,24 @@ int main()
 		mgLabel("Name", mgOpts());
 
 		mgInput(name, 64, mgOpts());
-		if (mgButton("Build", mgOpts())) {
+
+		if (mgIconButton("tools", "Build", mgOpts())) {
 			printf("Build!!\n");
 		}
 
 		mgBoxBegin(MG_ROW, mgOpts());
 			mgBoxBegin(MG_COL, mgOpts(mgGrow(1), mgSpacing(5), mgAlign(MG_JUSTIFY)));
-				mgParagraph("This is longer chunk of text.\nWould have used lorem ipsum but she was busy jumping over the lazy dog with the fox and all the men who came to the aid of the party.", mgOpts());
+				mgParagraph("She was busy jumping over the lazy dog with the fox and all the men who came to the aid of the party.", mgOpts());
 			mgBoxEnd();
 			mgButton("Build4", mgOpts());
 		mgBoxEnd();
 
-/*		mgProgress(sqr(sinf(glfwGetTime()*0.3f)), mgOpts());
+		mgProgress(sqr(sinf(glfwGetTime()*0.3f)), mgOpts());
 
 //		scroll = (200 - 45) * sqr(sinf(glfwGetTime()*0.3f));
 		mgScrollBar(&scroll, 200, 45, mgOpts());
 
-		mgBoxBegin(MG_ROW, mgOpts());
+/*		mgBoxBegin(MG_ROW, mgOpts());
 			mgBoxBegin(MG_COL, mgOpts(mgGrow(1), mgSpacing(5), mgAlign(MG_JUSTIFY)));
 				mgButton("Build1", mgOpts());
 				mgButton("Build2", mgOpts());

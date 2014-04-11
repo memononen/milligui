@@ -43,7 +43,8 @@ enum MGargTypes {
 	MG_PADDINGY_ARG,
 	MG_GROW_ARG,
 	MG_ALIGN_ARG,
-	MG_OVERFLOW_ARG,		// 10
+	MG_PACK_ARG,			// 10
+	MG_OVERFLOW_ARG,
 	MG_FONTSIZE_ARG,
 	MG_LINEHEIGHT_ARG,
 	MG_TEXTALIGN_ARG,
@@ -53,8 +54,8 @@ enum MGargTypes {
 	MG_FILLCOLOR_ARG,
 	MG_BORDERCOLOR_ARG,
 	MG_BORDERSIZE_ARG,
-	MG_CORNERRADIUS_ARG,
-	MG_TAG_ARG,				// 20
+	MG_CORNERRADIUS_ARG,	// 20
+	MG_TAG_ARG,
 	MG_ANCHOR_ARG,
 	MG_PROPX_ARG,
 	MG_PROPY_ARG,
@@ -71,6 +72,7 @@ enum MGlogicType {
 
 #define mgOverflow(v)			(mgPackOpt(MG_OVERFLOW_ARG, (v)))
 #define mgAlign(v)				(mgPackOpt(MG_ALIGN_ARG, (v)))
+#define mgPack(v)				(mgPackOpt(MG_PACK_ARG, (v)))
 #define mgGrow(v)				(mgPackOpt(MG_GROW_ARG, (v)))
 
 #define mgWidth(v)				(mgPackOptf(MG_WIDTH_ARG, (v)))
@@ -130,6 +132,7 @@ struct MGstyle {
 
 	unsigned char grow;
 	unsigned char align;
+	unsigned char pack;
 	unsigned char overflow;
 
 	unsigned char fontSize;
@@ -203,6 +206,9 @@ struct MGwidget {
 
 	union {
 		struct {
+			struct MGicon* icon;
+		} icon;
+		struct {
 			char* text;
 		} text;
 		struct {
@@ -225,6 +231,8 @@ struct MGwidget {
 void mgFrameBegin(struct NVGcontext* vg, int width, int height, int mx, int my, int mbut);
 void mgFrameEnd();
 
+int mgCreateIcon(const char* name, const char* filename);
+
 struct MGhit* mgPanelBegin(int dir, float x, float y, int zidx, struct MGopt* opts);
 struct MGhit* mgPanelEnd();
 
@@ -233,7 +241,7 @@ struct MGhit* mgBoxEnd();
 
 struct MGhit* mgText(const char* text, struct MGopt* opts);
 struct MGhit* mgParagraph(const char* text, struct MGopt* opts);
-struct MGhit* mgIcon(int width, int height, struct MGopt* opts);
+struct MGhit* mgIcon(const char* name, struct MGopt* opts);
 struct MGhit* mgInput(char* text, int maxtext, struct MGopt* opts);
 
 struct MGhit* mgCanvas(MGcanvasLogicFun logic, MGcanvasRenderFun render, void* uptr, struct MGopt* opts);
@@ -246,6 +254,7 @@ struct MGhit* mgNumber3(float* x, float* y, float* z, const char* units, struct 
 struct MGhit* mgColor(float* r, float* g, float* b, float* a, struct MGopt* opts);
 struct MGhit* mgCheckBox(const char* text, int* value, struct MGopt* opts);
 struct MGhit* mgButton(const char* text, struct MGopt* opts);
+struct MGhit* mgIconButton(const char* icon, const char* text, struct MGopt* opts);
 struct MGhit* mgItem(const char* text, struct MGopt* opts);
 struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGopt* opts);
 struct MGhit* mgProgress(float progress, struct MGopt* opts);

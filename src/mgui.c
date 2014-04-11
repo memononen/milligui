@@ -4,7 +4,8 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <stdio.h>
-
+#define NANOSVG_IMPLEMENTATION 1
+#include "nanosvg.h"
 
 static int mini(int a, int b) { return a < b ? a : b; }
 static int maxi(int a, int b) { return a > b ? a : b; }
@@ -101,6 +102,74 @@ static int stylePoolSize = 0;
 static int isStyleSet(struct MGstyle* style, unsigned int f)
 {
 	return style->set & (1 << f);
+}
+
+
+// TODO move resource handling to render abstraction.
+#define MG_MAX_ICONS 100
+struct MGicon
+{
+	char* name;
+	struct NSVGimage* image;
+};
+static struct MGicon* icons[MG_MAX_ICONS];
+static int iconCount = 0;
+
+
+static struct MGicon* findIcon(const char* name)
+{
+	int i = 0;
+	for (i = 0; i < iconCount; i++) {
+		if (strcmp(icons[i]->name, name) == 0)
+			return icons[i];
+	}
+	printf("Could not find icon '%s'\n", name);
+	return NULL;
+}
+
+int mgCreateIcon(const char* name, const char* filename)
+{
+	struct MGicon* icon = NULL;
+
+	if (iconCount >= MG_MAX_ICONS)
+		return -1;
+
+	icon = (struct MGicon*)malloc(sizeof(struct MGicon));
+	if (icon == NULL) goto error;
+	memset(icon, 0, sizeof(struct MGicon));
+
+	icon->name = (char*)malloc(strlen(name)+1);
+	if (icon->name == NULL) goto error;
+	strcpy(icon->name, name);
+
+	icon->image = nsvgParseFromFile(filename, "px", 96.0f);;
+	if (icon->image == NULL) goto error;
+
+	icons[iconCount++] = icon;
+
+	return 0;
+
+error:
+	if (icon != NULL) {
+		if (icon->name != NULL)
+			free(icon->name);
+		if (icon->image != NULL)
+			nsvgDelete(icon->image);
+		free(icon);
+	}
+	return -1;
+}
+
+static void deleteIcons()
+{
+	int i;
+	for (i = 0; i < iconCount; i++) {
+		if (icons[i]->image != NULL)
+			nsvgDelete(icons[i]->image);
+		free(icons[i]->name);
+		free(icons[i]);
+	}
+	iconCount = 0;
 }
 
 
@@ -373,7 +442,7 @@ int mgInit()
 			mgWidth(SLIDER_HANDLE),
 			mgHeight(SLIDER_HANDLE),
 			mgFillColor(255,255,255,255),
-			mgBorderColor(255,255,255,255),
+			mgBorderColor(255,255,255,0),
 			mgBorderSize(2),
 			mgCornerRadius(SLIDER_HANDLE/2)
 		),
@@ -383,6 +452,7 @@ int mgInit()
 		),
 		// Active
 		mgOpts(
+			mgBorderColor(255,255,255,255),
 			mgFillColor(32,32,32,255)
 		),
 		// Focus
@@ -441,6 +511,7 @@ int mgInit()
 	mgCreateStyle("button",
 		// Normal
 		mgOpts(
+			mgPack(MG_CENTER),
 			mgAlign(MG_CENTER),
 			mgSpacing(SPACING),
 			mgPadding(BUTTON_PADX, BUTTON_PADY),
@@ -479,6 +550,25 @@ int mgInit()
 		// Active
 		mgOpts(
 			mgContentColor(0,0,0,255)
+		),
+		// Focus
+		mgOpts()
+	);
+
+	mgCreateStyle("button.icon",
+		// Normal
+		mgOpts(
+			mgHeight(TEXT_SIZE),
+			mgContentColor(255,255,255,192),
+			mgSpacing(SPACING)
+		),
+		// Hover
+		mgOpts(
+			mgContentColor(255,255,255,192)
+		),
+		// Active
+		mgOpts(
+			mgContentColor(0,0,0,192)
 		),
 		// Focus
 		mgOpts()
@@ -530,7 +620,78 @@ int mgInit()
 		// Focus
 		mgOpts()
 	);
+	mgCreateStyle("select.arrow",
+		// Normal
+		mgOpts(
+			mgHeight(TEXT_SIZE*0.8f),
+			mgContentColor(255,255,255,255)
+		),
+		// Hover
+		mgOpts(
+			mgContentColor(255,255,255,255)
+		),
+		// Active
+		mgOpts(
+			mgContentColor(0,0,0,255)
+		),
+		// Focus
+		mgOpts()
+	);
 
+	mgCreateStyle("checkbox",
+		// Normal
+		mgOpts(
+			mgAlign(MG_CENTER),
+			mgSpacing(SPACING),
+			mgPaddingY(BUTTON_PADY),
+			mgLogic(MG_CLICK)
+		),
+		mgOpts(), mgOpts(), mgOpts()
+	);
+
+	mgCreateStyle("checkbox.box",
+		// Normal
+		mgOpts(
+			mgAlign(MG_CENTER),
+			mgFillColor(255,255,255,16),
+			mgBorderColor(255,255,255,128),
+			mgBorderSize(1),
+			mgCornerRadius(4),
+			mgWidth(CHECKBOX_SIZE),
+			mgHeight(CHECKBOX_SIZE)
+		),
+		// Hover
+		mgOpts(
+			mgFillColor(255,255,255,64),
+			mgBorderColor(255,255,255,192)
+		),
+		// Active
+		mgOpts(
+			mgFillColor(255,255,255,192),
+			mgBorderColor(255,255,255,255)
+		),
+		// Focus
+		mgOpts(
+			mgBorderColor(0,192,255,128)
+		)
+	);
+
+	mgCreateStyle("checkbox.box.tick",
+		// Normal
+		mgOpts(
+			mgContentColor(255,255,255,255)
+		),
+		// Hover
+		mgOpts(
+			mgContentColor(255,255,255,255)
+		),
+		// Active
+		mgOpts(
+			mgContentColor(0,0,0,255)
+		),
+		// Focus
+		mgOpts()
+	);
 
 	mgCreateStyle("item",
 		// Normal
@@ -683,6 +844,8 @@ void mgTerminate()
 			free(stylePool[i].path[j]);
 		free(stylePool[i].path);
 	}
+	// Free resources
+	deleteIcons();
 }
 
 void mgFrameBegin(struct NVGcontext* vg, int width, int height, int mx, int my, int mbut)
@@ -989,6 +1152,67 @@ static void drawDebugRect(struct MGwidget* w)
 	nvgStroke(state.vg);
 }
 
+
+static void drawIcon(struct MGwidget* w)
+{
+	int i;
+	struct NSVGimage* image = NULL;
+	struct NSVGshape* shape = NULL;
+	int override = isStyleSet(&w->style, MG_CONTENTCOLOR_ARG);
+	float sx, sy, s;
+
+	if (w->icon.icon == NULL) return;
+	image = w->icon.icon->image;
+	if (image == NULL) return;
+
+	if (override) {
+		nvgFillColor(state.vg, nvgCol(w->style.contentColor));
+		nvgStrokeColor(state.vg, nvgCol(w->style.contentColor));
+	}
+	sx = w->width / image->width;
+	sy = w->height / image->height;
+	s = minf(sx, sy);
+
+	nvgSave(state.vg);
+	nvgTranslate(state.vg, w->x + w->width/2, w->y + w->height/2);
+	nvgScale(state.vg, s, s);
+	nvgTranslate(state.vg, -image->width/2, -image->height/2);
+
+	for (shape = image->shapes; shape != NULL; shape = shape->next) {
+		struct NSVGpath* path;
+
+		if (shape->fill.type == NSVG_PAINT_NONE && shape->stroke.type == NSVG_PAINT_NONE)
+			continue;
+
+		nvgBeginPath(state.vg);
+		for (path = shape->paths; path != NULL; path = path->next) {
+			nvgMoveTo(state.vg, path->pts[0], path->pts[1]);
+			for (i = 1; i < path->npts; i += 3) {
+				float* p = &path->pts[i*2];
+				nvgBezierTo(state.vg, p[0],p[1], p[2],p[3], p[4],p[5]);
+			}
+			if (path->closed)
+				nvgLineTo(state.vg, path->pts[0], path->pts[1]);
+		}
+
+		if (shape->fill.type == NSVG_PAINT_COLOR) {
+			if (!override)
+				nvgFillColor(state.vg, nvgCol(shape->fill.color));
+			nvgFill(state.vg);
+//			printf("image %s\n", w->icon.icon->name);
+//			nvgDebugDumpPathCache(state.vg);
+		}
+		if (shape->stroke.type == NSVG_PAINT_COLOR) {
+			if (!override)
+				nvgStrokeColor(state.vg, nvgCol(shape->stroke.color));
+			nvgStrokeWidth(state.vg, shape->strokeWidth);
+			nvgStroke(state.vg);
+		}
+	}
+
+	nvgRestore(state.vg);
+}
+
 static void drawRect(struct MGwidget* w)
 {
 	// round
@@ -1043,9 +1267,9 @@ struct MGparagraphRow {
 	const char* end;
 };
 
-static int flowParagraph(const char* str, float size, float maxw, struct MGparagraphRow* rows, int maxRows)
+static int flowParagraph(const char* str, float maxw, struct MGparagraphRow* rows, int maxRows)
 {
-	int i, n = 0;
+	int n = 0;
 	float tw, x = 0;
 	const char* rstart = str;
 	const char* wstart = str;
@@ -1125,7 +1349,7 @@ static void drawParagraph(struct MGwidget* w)
 	nvgFillColor(state.vg, nvgCol(w->style.contentColor));
 	nvgFontSize(state.vg, w->style.fontSize);
 
-	n = flowParagraph(w->text.text, w->style.fontSize, w->width, rows, 64);
+	n = flowParagraph(w->text.text, w->width, rows, 64);
 	nvgVertMetrics(state.vg, NULL, NULL, &th);
 	if (n == 0) return;
 	if (w->style.lineHeight > 0)
@@ -1224,7 +1448,8 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 				break;
 
 			case MG_ICON:
-				drawRect(w);
+//				drawRect(w);
+				drawIcon(w);
 				if (debug) drawDebugRect(w);
 				break;
 
@@ -1385,7 +1610,7 @@ static void paragraphSize(const char* str, float size, float lineh, float maxw, 
 	nvgFontFace(state.vg, "sans");
 	nvgFontSize(state.vg, size);
 
-	n = flowParagraph(str, size, maxw, rows, 64);
+	n = flowParagraph(str, maxw, rows, 64);
 	if (n == 0) {
 		*w = *h = 0;
 		return;
@@ -1574,6 +1799,7 @@ static int layoutWidgets(struct MGwidget* root)
 
 	// Layout box model widgets
 	if (root->dir == MG_COL) {
+		float packSpacing = 0;
 
 		for (w = root->box.children; w != NULL; w = w->next) {
 			if (isStyleSet(&w->style, MG_ANCHOR_ARG)) continue;
@@ -1586,6 +1812,20 @@ static int layoutWidgets(struct MGwidget* root)
 		avail = rh - sum;
 		if (root->style.overflow != MG_FIT)
 			avail = maxf(0, avail); 
+
+		if (ngrow == 0 && avail > 0) {
+			if (root->style.pack == MG_START)
+				y += 0;
+			else if (root->style.pack == MG_CENTER)
+				y += avail/2;
+			else if (root->style.pack == MG_END)
+				y += avail;
+			else if (root->style.pack == MG_JUSTIFY) {
+				packSpacing = avail / nitems;
+				y += packSpacing/2;
+			}
+			avail = 0;
+		}
 
 		for (w = root->box.children; w != NULL; w = w->next) {
 			if (isStyleSet(&w->style, MG_ANCHOR_ARG)) continue;
@@ -1606,13 +1846,14 @@ static int layoutWidgets(struct MGwidget* root)
 			default: // MG_START and MG_JUSTIFY
 				break;
 			}
-			y += w->height + w->style.spacing;
+			y += w->height + w->style.spacing + packSpacing;
 
 			if (w->type == MG_BOX)
 				reflow |= layoutWidgets(w);
 		}
 
 	} else {
+		float packSpacing = 0;
 
 		for (w = root->box.children; w != NULL; w = w->next) {
 			if (isStyleSet(&w->style, MG_ANCHOR_ARG)) continue;
@@ -1625,6 +1866,20 @@ static int layoutWidgets(struct MGwidget* root)
 		avail = rw - sum;
 		if (root->style.overflow != MG_FIT)
 			avail = maxf(0, avail); 
+
+		if (ngrow == 0 && avail > 0) {
+			if (root->style.pack == MG_START)
+				x += 0;
+			else if (root->style.pack == MG_CENTER)
+				x += avail/2;
+			else if (root->style.pack == MG_END)
+				x += avail;
+			else if (root->style.pack == MG_JUSTIFY) {
+				packSpacing = avail / nitems;
+				x += packSpacing/2;
+			}
+			avail = 0;
+		}
 
 		for (w = root->box.children; w != NULL; w = w->next) {
 			if (isStyleSet(&w->style, MG_ANCHOR_ARG)) continue;
@@ -1648,7 +1903,7 @@ static int layoutWidgets(struct MGwidget* root)
 				break;
 			}
 
-			x += w->width + w->style.spacing;
+			x += w->width + w->style.spacing + packSpacing;
 
 			if (w->type == MG_BOX)
 				reflow |= layoutWidgets(w);
@@ -1716,6 +1971,7 @@ static void dumpOpts(struct MGopt* opts)
 		switch (opts->type) {
 			case MG_OVERFLOW_ARG:		printf("overflow=%d ", opts->ival); break;
 			case MG_ALIGN_ARG:			printf("align=%d ", opts->ival); break;
+			case MG_PACK_ARG:			printf("pack=%d ", opts->ival); break;
 			case MG_GROW_ARG:			printf("grow=%d ", opts->ival); break;
 			case MG_WIDTH_ARG:			printf("width=%f ", opts->fval); break;
 			case MG_HEIGHT_ARG:			printf("height=%f ", opts->fval); break;
@@ -1791,6 +2047,7 @@ static void flattenStyle(struct MGstyle* style, struct MGopt* opts)
 		switch (opts->type) {
 			case MG_OVERFLOW_ARG:		style->overflow = opts->ival; break;
 			case MG_ALIGN_ARG:			style->align = opts->ival; break;
+			case MG_PACK_ARG:			style->pack = opts->ival; break;
 			case MG_GROW_ARG:			style->grow = opts->ival; break;
 
 			case MG_WIDTH_ARG:			style->width = opts->fval; unset = 1 << MG_PROPWIDTH_ARG; break;
@@ -2201,18 +2458,43 @@ struct MGhit* mgText(const char* text, struct MGopt* opts)
 	return hitResult(w);
 }
 
-struct MGhit* mgIcon(int width, int height, struct MGopt* opts)
+struct MGhit* mgIcon(const char* name, struct MGopt* opts)
 {
 	struct MGwidget* parent = getParent();
 	struct MGwidget* w = allocWidget(MG_ICON);
+	float aspect = 1.0f;
 	if (parent != NULL)
 		addChildren(parent, w);
 	state.previous = w;
 
+	if (name != NULL)
+		w->icon.icon = findIcon(name);
+
 	w->style = computeStyle(getState(w), mgOpts(mgTag("icon"), opts));
-	w->cwidth = width;
-	w->cheight = height;
-	applySize(w);
+
+	if (w->icon.icon != NULL) {
+		w->cwidth = w->icon.icon->image->width;
+		w->cheight = w->icon.icon->image->height;		
+	} else {
+		w->cwidth = 1;
+		w->cheight = 1;
+	}
+	aspect = w->cwidth / w->cheight;
+
+//	applySize(w);
+	// Maintain aspect
+	if (isStyleSet(&w->style, MG_WIDTH_ARG)) {
+		w->cwidth = w->style.width;
+		if (!isStyleSet(&w->style, MG_HEIGHT_ARG))
+			w->cheight = w->cwidth / aspect;
+	}
+	if (isStyleSet(&w->style, MG_HEIGHT_ARG)) {
+		w->cheight = w->style.height;
+		if (!isStyleSet(&w->style, MG_WIDTH_ARG))
+			w->cwidth = w->cheight * aspect;
+	}
+
+//	printf("icon %f %f\n", w->cwidth, w->cheight);
 
 	return hitResult(w);
 }
@@ -2353,9 +2635,11 @@ struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGopt* opts)
 		mgBoxBegin(MG_ROW, mgOpts(mgPropPosition(MG_START,MG_CENTER,0,0.5f), mgAlign(MG_CENTER), mgOverflow(MG_VISIBLE), mgTag("bar"), mgPropWidth(pc)));
 		mgBoxEnd();
 
-		hopts = mgOpts(mgLogic(MG_DRAG), mgPropPosition(MG_JUSTIFY,MG_CENTER,pc,0.5f), mgTag("handle"));
-		hstyle = computeStyle(MG_NORMAL, hopts);
-		hres = mgIcon(hstyle.width, hstyle.height, hopts);
+//		hopts = mgOpts(mgLogic(MG_DRAG), mgPropPosition(MG_JUSTIFY,MG_CENTER,pc,0.5f), mgTag("handle"));
+//		hstyle = computeStyle(MG_NORMAL, hopts);
+//		hres = mgIcon("handle", hopts);
+		mgBoxBegin(MG_ROW, mgOpts(mgLogic(MG_DRAG), mgPropPosition(MG_JUSTIFY,MG_CENTER,pc,0.5f), mgTag("handle")));
+		hres = mgBoxEnd();
 
 	res = mgBoxEnd();
 
@@ -2515,22 +2799,32 @@ struct MGhit* mgColor(float* r, float* g, float* b, float* a, struct MGopt* opts
 
 struct MGhit* mgCheckBox(const char* text, int* value, struct MGopt* opts)
 {
-	struct MGhit* ret = mgBoxBegin(MG_ROW, mgOpts(mgAlign(MG_CENTER), mgSpacing(SPACING), mgPaddingY(BUTTON_PADY), mgLogic(MG_CLICK), opts));
-		mgText(text, mgOpts(mgFontSize(LABEL_SIZE), mgGrow(1)));
-		if (*value)
-			mgIcon(CHECKBOX_SIZE, CHECKBOX_SIZE, mgOpts());
-		else
-			mgIcon(CHECKBOX_SIZE, CHECKBOX_SIZE/4, mgOpts());
+	struct MGhit* ret = mgBoxBegin(MG_ROW, mgOpts(mgTag("checkbox"), mgAlign(MG_CENTER), mgSpacing(SPACING), mgPaddingY(BUTTON_PADY), mgLogic(MG_CLICK), opts));
+		mgText(text, mgOpts(mgTag("label"), mgGrow(1)));
+		mgBoxBegin(MG_ROW, mgOpts(mgTag("box"), mgWidth(CHECKBOX_SIZE), mgHeight(CHECKBOX_SIZE)));
+			mgIcon(*value ? "check" : NULL, mgOpts(mgTag("tick"), mgPropWidth(1.0f), mgPropHeight(1.0f)));
+		mgBoxEnd();
 	mgBoxEnd();
+	
 	if (ret != NULL)
 		*value = !*value;
+
 	return ret;
 }
 
 struct MGhit* mgButton(const char* text, struct MGopt* opts)
 {
 	struct MGhit* ret = mgBoxBegin(MG_ROW, mgOpts(mgTag("button"), opts));
-		mgText(text, mgOpts(mgGrow(1)));
+		mgText(text, mgOpts());
+	mgBoxEnd();
+	return ret;
+}
+
+struct MGhit* mgIconButton(const char* icon, const char* text, struct MGopt* opts)
+{
+	struct MGhit* ret = mgBoxBegin(MG_ROW, mgOpts(mgTag("button"), opts));
+		mgIcon(icon, mgOpts());
+		mgText(text, mgOpts());
 	mgBoxEnd();
 	return ret;
 }
@@ -2552,7 +2846,10 @@ struct MGhit* mgSelect(int* value, const char** choices, int nchoises, struct MG
 	int i;
 	mgBoxBegin(MG_ROW, mgOpts(mgTag("select"), opts));
 		mgText(choices[*value], mgOpts(mgGrow(1)));
-		mgIcon(CHECKBOX_SIZE, CHECKBOX_SIZE, mgOpts());
+
+//		mgIcon(CHECKBOX_SIZE, CHECKBOX_SIZE, mgOpts());
+		mgIcon("arrow-combo", mgOpts(mgTag("arrow")));
+
 	mgBoxEnd();
 	mgPopupBegin(MG_ACTIVE, MG_COL, mgOpts(mgAlign(MG_JUSTIFY)));
 		for (i = 0; i < nchoises; i++)
