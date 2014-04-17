@@ -208,13 +208,7 @@ struct MGwidget {
 		struct {
 			struct MGicon* icon;
 		} icon;
-		struct {
-			char* text;
-		} text;
-		struct {
-			char* text;
-			int maxtext;
-		} input;
+		char* text;
 		struct {
 			struct MGwidget* children;
 		} box;

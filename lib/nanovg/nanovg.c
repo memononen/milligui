@@ -2019,7 +2019,7 @@ int nvgTextGlyphPositions(struct NVGcontext* ctx, float x, float y, const char* 
 
 	fonsTextIterInit(ctx->fs, &iter, x, y, string, end);
 	while (fonsTextIterNext(ctx->fs, &iter, &q)) {
-		if (positions && npos < maxPositions) {
+		if (positions != NULL && npos < maxPositions) {
 			positions[npos].str = iter.str;
 			positions[npos].x = q.x0;
 			positions[npos].width = q.x1 - q.x0;
@@ -2031,7 +2031,7 @@ int nvgTextGlyphPositions(struct NVGcontext* ctx, float x, float y, const char* 
 		}
 	}
 
-	if (bounds) {
+	if (bounds != NULL) {
 		bounds[0] = minx;
 		bounds[1] = miny;
 		bounds[2] = maxx;
