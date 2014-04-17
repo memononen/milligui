@@ -213,7 +213,6 @@ struct MUIstate
 	struct MGidRange idStack[MG_ID_STACK_SIZE];
 	int idStackCount;
 
-	struct MGwidget* previous;
 	struct MGwidget* panels[MG_MAX_PANELS];
 	int panelsz[MG_MAX_PANELS];
 	int panelCount;
@@ -221,7 +220,6 @@ struct MUIstate
 	const char* tags[MG_MAX_TAGS];
 	int tagCount;
 
-//	struct MGtransient transients[MG_MAX_TRANSIENTS];
 	unsigned char transientMem[MG_TRANSIENT_POOL_SIZE];
 	int transientMemSize;
 	int transientCount;
@@ -234,6 +232,22 @@ struct MUIstate
 };
 
 static struct MUIstate state;
+
+static unsigned char* findTransient(unsigned int id, int size)
+{	
+	int i;
+	unsigned char* ptr = state.transientMem;
+	for (i = 0; i < state.transientCount; i++) {
+		struct MGtransientHeader* trans = (struct MGtransientHeader*)ptr;
+		if (trans->id == id) {
+			if (trans->size == size) {
+				return ptr + sizeof(struct MGtransientHeader);
+			}
+		}
+		ptr += sizeof(struct MGtransientHeader) + trans->size; 
+	}
+	return NULL;
+}
 
 static unsigned char* allocTransient(unsigned int id, int size)
 {
@@ -380,6 +394,16 @@ static struct MGwidget* allocWidget(int type)
 	w->bubble = 1;
 	return w;
 }
+
+static struct MGwidget* findWidget(unsigned int id)
+{
+	int i;
+	for (i = 0; i < widgetPoolSize; i++)
+		if (widgetPool[i].id == id)
+			return &widgetPool[i];
+	return NULL;
+}
+
 
 static int inRect(float x, float y, float w, float h)
 {
@@ -889,8 +913,6 @@ void mgFrameBegin(struct NVGcontext* vg, int width, int height, int mx, int my, 
 	state.idStackCount = 1;
 	state.idStack[0].base = 0;
 	state.idStack[0].count = 0;
-
-	state.previous = NULL;
 
 	tempPoolSize = 0;
 	textPoolSize = 0;
@@ -2224,6 +2246,13 @@ static struct MGhit* hitResult(struct MGwidget* w)
 	return NULL;
 }
 
+static struct MGhit* hitResult2(unsigned int id)
+{
+	if (state.clicked == id || state.pressed == id || state.dragged == id || state.released == id)
+		return &state.result;
+	return NULL;
+}
+
 static unsigned char getState(struct MGwidget* w)
 {
 	unsigned char ret = MG_NORMAL;
@@ -2233,6 +2262,15 @@ static unsigned char getState(struct MGwidget* w)
 	if (state.active == w->id) ret |= MG_ACTIVE;
 	if (state.hover == w->id) ret |= MG_HOVER;
 	if (state.focus == w->id) ret |= MG_FOCUS;
+	return ret;
+}
+
+static unsigned char getState2(unsigned int id)
+{
+	unsigned char ret = MG_NORMAL;
+	if (state.active == id) ret |= MG_ACTIVE;
+	if (state.hover == id) ret |= MG_HOVER;
+	if (state.focus == id) ret |= MG_FOCUS;
 	return ret;
 }
 
@@ -2295,7 +2333,7 @@ unsigned int murmur3(const void * key, int len, unsigned int seed)
 	return h;
 } 
 
-static int matchStyle(struct MGnamedStyle* style, char** path, int npath)
+static int matchStyle(struct MGnamedStyle* style, const char* path[], int npath)
 {
 	int i, a = style->npath-1, b = npath-1;
 	int n = mini(npath, style->npath);
@@ -2323,7 +2361,7 @@ static int matchStyle(struct MGnamedStyle* style, char** path, int npath)
 	return n;
 }
 
-static struct MGnamedStyle* selectStyle(char** path, int npath)
+static struct MGnamedStyle* selectStyle(const char* path[], int npath)
 {
 	int i, nmax = 0;
 	struct MGnamedStyle* smax = NULL;
@@ -2353,7 +2391,7 @@ static struct MGnamedStyle* selectStyle(char** path, int npath)
 	return smax;
 }
 
-static char* getTag(struct MGopt* opts)
+static const char* getTag(struct MGopt* opts)
 {
 	char* tag = NULL;
 	for (; opts != NULL; opts = opts->next) {
@@ -2363,14 +2401,48 @@ static char* getTag(struct MGopt* opts)
 	return tag;
 }
 
-static struct MGstyle computeStyle(unsigned char wstate, struct MGopt* opts)
+static struct MGstyle getStyle(unsigned char wstate, struct MGopt* opts, const char* subtag)
 {
 	int i = 0;
-	char* path[100];
+	const char* path[100];
 	int npath = 0;
 	struct MGnamedStyle* match = NULL;
 	struct MGstyle style;
-	char* tag = getTag(opts);
+	const char* tag = getTag(opts);
+
+	// Find current path to be used with selector.
+	for (i = 0; i < state.tagCount; i++) {
+		if (state.tags[i] != NULL)
+			path[npath++] = (char*)state.tags[i];
+	}
+	if (tag != NULL)
+		path[npath++] = tag;
+	if (subtag != NULL)
+		path[npath++] = subtag;
+
+	match = selectStyle(path, npath);
+	if (match != NULL) {
+		if (wstate & MG_ACTIVE)
+			return match->active;
+		else if (wstate & MG_HOVER)
+			return match->hover;
+		else if (wstate & MG_FOCUS)
+			return match->focus;
+		else
+			return match->normal;
+	}
+	memset(&style, 0, sizeof(style));
+	return style;
+}
+
+static struct MGstyle computeStyle(unsigned char wstate, struct MGopt* opts, const char* subtag)
+{
+	int i = 0;
+	const char* path[100];
+	int npath = 0;
+	struct MGnamedStyle* match = NULL;
+	struct MGstyle style;
+	const char* tag = getTag(opts);
 	memset(&style, 0, sizeof(style));
 
 	// Find current path to be used with selector.
@@ -2379,7 +2451,9 @@ static struct MGstyle computeStyle(unsigned char wstate, struct MGopt* opts)
 			path[npath++] = (char*)state.tags[i];
 	}
 	if (tag != NULL)
-		path[npath++] = (char*)tag;
+		path[npath++] = tag;
+	if (subtag != NULL)
+		path[npath++] = subtag;
 
 	match = selectStyle(path, npath);
 	if (match != NULL) {
@@ -2396,7 +2470,7 @@ static struct MGstyle computeStyle(unsigned char wstate, struct MGopt* opts)
 	return style;
 }
 
-struct MGhit* mgPanelBegin(int dir, float x, float y, int zidx, struct MGopt* opts)
+unsigned int mgPanelBegin(int dir, float x, float y, int zidx, struct MGopt* opts)
 {
 	struct MGwidget* w = NULL;
 
@@ -2408,75 +2482,70 @@ struct MGhit* mgPanelBegin(int dir, float x, float y, int zidx, struct MGopt* op
 	w->x = x;
 	w->y = y;
 	w->dir = dir;
-	w->style = computeStyle(getState(w), opts);
-	state.previous = w;
+	w->style = computeStyle(getState(w), opts, NULL);
 
 	pushBox(w);
 	pushTag(getTag(opts));
 
 	addPanel(w, zidx);
 
-
-	return hitResult(w);
+	return w->id;
 }
 
-struct MGhit* mgPanelEnd()
+unsigned int mgPanelEnd()
 {
 	popId();
-
 	popTag();
 	struct MGwidget* w = popBox();
 	if (w != NULL) {
 		layoutPanel(w);
-		state.previous = w;
+		return w->id;
 	}
 
-	return hitResult(w);
+	return 0;
 }
 
-struct MGhit* mgBoxBegin(int dir, struct MGopt* opts)
+unsigned int mgBoxBegin(int dir, struct MGopt* opts)
 {
 	struct MGwidget* parent = getParent();
 	struct MGwidget* w = allocWidget(MG_BOX);
 	if (parent != NULL)
 		addChildren(parent, w);
-	state.previous = w;
 
 	opts = mgOpts(mgTag("box"), opts);
 
 	w->dir = dir;
-	w->style = computeStyle(getState(w), opts);
+	w->style = computeStyle(getState(w), opts, NULL);
 
 	pushBox(w);
 	pushTag(getTag(opts));
 
-	return hitResult(w);
+	return w->id;
 }
 
-struct MGhit* mgBoxEnd()
+unsigned int mgBoxEnd()
 {
 	struct MGwidget* w = popBox();
+	popTag();
 	if (w != NULL) {
 //		fitToContent(w);
 //		applySize(w);
-		state.previous = w;
+		return w->id;
 	}
-	popTag();
-	return hitResult(w);
+	return 0;
 }
 
-struct MGhit* mgParagraph(const char* text, struct MGopt* opts)
+unsigned int mgParagraph(const char* text, struct MGopt* opts)
 {
 	float tw, th;
 	struct MGwidget* parent = getParent();
 	struct MGwidget* w = allocWidget(MG_PARAGRAPH);
 	if (parent != NULL)
 		addChildren(parent, w);
-	state.previous = w;
 
 	w->text.text = allocText(text);
 
-	w->style = computeStyle(getState(w), mgOpts(mgTag("text"), opts));
+	w->style = computeStyle(getState(w), mgOpts(mgTag("text"), opts), NULL);
 
 	textSize(NULL, w->style.fontSize, NULL, &th);
 	paragraphSize(w->text.text, w->style.fontSize, w->style.lineHeight, th*20, &tw, &th);
@@ -2484,42 +2553,40 @@ struct MGhit* mgParagraph(const char* text, struct MGopt* opts)
 	w->cheight = th;
 	applySize(w);
 
-	return hitResult(w);
+	return w->id;
 }
 
-struct MGhit* mgText(const char* text, struct MGopt* opts)
+unsigned int mgText(const char* text, struct MGopt* opts)
 {
 	float tw, th;
 	struct MGwidget* parent = getParent();
 	struct MGwidget* w = allocWidget(MG_TEXT);
 	if (parent != NULL)
 		addChildren(parent, w);
-	state.previous = w;
 
 	w->text.text = allocText(text);
 
-	w->style = computeStyle(getState(w), mgOpts(mgTag("text"), opts));
+	w->style = computeStyle(getState(w), mgOpts(mgTag("text"), opts), NULL);
 	textSize(w->text.text, w->style.fontSize, &tw, &th);
 	w->cwidth = tw;
 	w->cheight = th;
 	applySize(w);
 
-	return hitResult(w);
+	return w->id;
 }
 
-struct MGhit* mgIcon(const char* name, struct MGopt* opts)
+unsigned int mgIcon(const char* name, struct MGopt* opts)
 {
 	struct MGwidget* parent = getParent();
 	struct MGwidget* w = allocWidget(MG_ICON);
 	float aspect = 1.0f;
 	if (parent != NULL)
 		addChildren(parent, w);
-	state.previous = w;
 
 	if (name != NULL)
 		w->icon.icon = findIcon(name);
 
-	w->style = computeStyle(getState(w), mgOpts(mgTag("icon"), opts));
+	w->style = computeStyle(getState(w), mgOpts(mgTag("icon"), opts), NULL);
 
 	if (w->icon.icon != NULL) {
 		w->cwidth = w->icon.icon->image->width;
@@ -2545,38 +2612,43 @@ struct MGhit* mgIcon(const char* name, struct MGopt* opts)
 
 //	printf("icon %f %f\n", w->cwidth, w->cheight);
 
-	return hitResult(w);
+	return w->id;
 }
 
-struct MGhit* mgCanvas(MGcanvasLogicFun logic, MGcanvasRenderFun render, void* uptr, struct MGopt* opts)
+unsigned int mgCanvas(float width, float height, MGcanvasLogicFun logic, MGcanvasRenderFun render, void* uptr, struct MGopt* opts)
 {
 	struct MGwidget* parent = getParent();
 	struct MGwidget* w = allocWidget(MG_CANVAS);
 	if (parent != NULL)
 		addChildren(parent, w);
-	state.previous = w;
 
 	w->logic = logic;
 	w->render = render;
 	w->uptr = uptr;
+	w->cwidth = width;
+	w->cheight = height;
 
-	w->style = computeStyle(getState(w), mgOpts(mgTag("canvas"), opts));
+	w->style = computeStyle(getState(w), mgOpts(mgTag("canvas"), opts), NULL);
 
-	return hitResult(w);
+	return w->id;
 }
 
 struct MGsliderState {
 	float value;
 	float vstart;
 	float vmin, vmax;
-	float hr;
+/*	struct MGstyle slotStyle;
+	struct MGstyle barStyle;
+	struct MGstyle handleStyle;*/
 };
 
 static void sliderDraw(void* uptr, struct MGwidget* w, struct NVGcontext* vg, const float* view)
 {
-	struct MGsliderState* input = (struct MGsliderState*)uptr;
-	float hr = input->hr;
-	float x;
+	struct MGsliderState* input = (struct MGsliderState*)findTransient(w->id, sizeof(struct MGsliderState));
+	float x, hr;
+	if (input == NULL) return;
+
+	hr = maxf(2.0f, w->height - w->style.paddingy*2) / 2.0f;
 
 /*	nvgBeginPath(vg);
 	nvgRect(vg, w->x, w->y, w->width, w->height);
@@ -2592,12 +2664,12 @@ static void sliderDraw(void* uptr, struct MGwidget* w, struct NVGcontext* vg, co
 
 	x = w->x + hr + (input->value - input->vmin) / (input->vmax - input->vmin) * (w->width - hr*2);
 
-	if (isStyleSet(&w->style, MG_FILLCOLOR_ARG)) {
+//	if (isStyleSet(&w->style, MG_FILLCOLOR_ARG)) {
 		nvgBeginPath(vg);
 		nvgCircle(vg, x, w->y+w->height/2, hr);
-		nvgFillColor(vg, nvgCol(w->style.fillColor));
+		nvgFillColor(vg, nvgRGBA(255,255,255,255));
 		nvgFill(vg);
-	}
+//	}
 
 	if (isStyleSet(&w->style, MG_BORDERCOLOR_ARG)) {
 		float s = w->style.borderSize * 0.5f;
@@ -2611,12 +2683,17 @@ static void sliderDraw(void* uptr, struct MGwidget* w, struct NVGcontext* vg, co
 
 static void sliderLogic(void* uptr, struct MGwidget* w, struct MGhit* hit)
 {
-	struct MGsliderState* input = (struct MGsliderState*)uptr;
+	struct MGsliderState* input = (struct MGsliderState*)findTransient(w->id, sizeof(struct MGsliderState));
 	struct MGsliderState* output = (struct MGsliderState*)hit->storage;
-	float hr = input->hr;
-	float xmin = w->x + hr;
-	float xmax = w->x + w->width - hr;
-	float xrange = maxf(1.0f, xmax - xmin);
+	float hr, xmin, xmax, xrange;
+
+	if (input == NULL) return;
+
+	hr = maxf(2.0f, w->height - w->style.paddingy*2) / 2.0f;
+
+	xmin = w->x + hr;
+	xmax = w->x + w->width - hr;
+	xrange = maxf(1.0f, xmax - xmin);
 
 	if (hit->pressed) {
 		float u = (input->value - input->vmin) / (input->vmax - input->vmin);
@@ -2638,45 +2715,103 @@ static void sliderLogic(void* uptr, struct MGwidget* w, struct MGhit* hit)
 }
 
 
-struct MGhit* mgSlider2(float* value, float vmin, float vmax, struct MGopt* opts)
+unsigned int mgSlider(float* value, float vmin, float vmax, struct MGopt* opts)
 {
 	struct MGhit* res = NULL;
-	struct MGstyle comp;
-	struct MGsliderState* input = (struct MGsliderState*)mgTempMalloc(sizeof(struct MGsliderState));
-	if (input == NULL)
-		return NULL;
+	//struct MGstyle comp;
+	struct MGsliderState* input = NULL;
+	unsigned int canvas;
 
+/*
+	mgCreateStyle("slider.slot", mgOpts(
+		mgHeight(2), //SLIDER_HANDLE),
+		mgFillColor(0,0,0,128)
+//		mgPaddingX(SLIDER_HANDLE/2),
+//		mgCornerRadius(3)
+	), mgOpts(), mgOpts(), mgOpts());
+
+	mgCreateStyle("slider.bar",
+		// Normal
+		mgOpts(
+			mgPaddingX(SLIDER_HANDLE/2),
+			mgHeight(2), //SLIDER_HANDLE),
+			mgOverflow(MG_VISIBLE),
+			mgFillColor(220,220,220,255)
+		),
+		// Hover
+		mgOpts(
+			mgFillColor(255,255,255,255)
+		),
+		// Active
+		mgOpts(
+			mgFillColor(255,255,255,255)
+		),
+		// Focus
+		mgOpts(
+		)
+	);
+
+	mgCreateStyle("slider.handle",
+		// Normal
+		mgOpts(
+			mgWidth(SLIDER_HANDLE),
+			mgHeight(SLIDER_HANDLE),
+			mgFillColor(255,255,255,255),
+			mgBorderColor(255,255,255,0),
+			mgBorderSize(2),
+			mgCornerRadius(SLIDER_HANDLE/2)
+		),
+		// Hover
+		mgOpts(
+//			mgFillColor(220,220,220,255)
+		),
+		// Active
+		mgOpts(
+			mgBorderColor(255,255,255,255),
+			mgFillColor(32,32,32,255)
+		),
+		// Focus
+		mgOpts(
+			mgBorderColor(0,192,255,128)
+		)
+	);
+*/
 	opts = mgOpts(mgTag("slider"), opts);
-	comp = computeStyle(MG_NORMAL, opts);
-	float th;
-	textSize(NULL, comp.fontSize, NULL, &th);
-	opts = mgOpts(mgWidth(DEFAULT_SLIDERW), mgHeight(th), opts);
+	canvas = mgCanvas(DEFAULT_SLIDERW, SLIDER_HANDLE, sliderLogic, sliderDraw, NULL, opts);
 
-	input->value = *value;
-	input->vmin = vmin;
-	input->vmax = vmax;
-	input->hr = comp.height / 2;
+	input = (struct MGsliderState*)allocTransient(canvas, sizeof(struct MGsliderState));
+	if (input != NULL) {
+		unsigned char s = getState2(canvas);
 
-	res = mgCanvas(sliderLogic, sliderDraw, input, opts);
+		input->value = *value;
+		input->vmin = vmin;
+		input->vmax = vmax;
 
+/*		input->slotStyle = getStyle(s, opts, "slot");
+		input->barStyle = getStyle(s, opts, "bar");
+		input->handleStyle = getStyle(s, opts, "handle");*/
+	}
+
+	res = hitResult2(canvas);
 	if (res != NULL) {
 		struct MGsliderState* output = (struct MGsliderState*)res->storage;
 		*value = output->value;
 	}
 
-	return res;
+	return canvas;
 }
 
 
-struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGopt* opts)
+unsigned int mgSlider2(float* value, float vmin, float vmax, struct MGopt* opts)
 {
 	struct MGhit* res = NULL;
 	struct MGhit* hres = NULL;
 	float pc = (*value - vmin) / (vmax - vmin);
 	struct MGopt* hopts;	
 	struct MGstyle hstyle;
+	unsigned int slider, handle;
 
-	mgBoxBegin(MG_ROW, mgOpts(mgLogic(MG_DRAG), mgTag("slider"), opts));
+	slider = mgBoxBegin(MG_ROW, mgOpts(mgLogic(MG_DRAG), mgTag("slider"), opts));
 
 		mgBoxBegin(MG_ROW, mgOpts(mgPropPosition(MG_JUSTIFY,MG_CENTER,0,0.5f), mgTag("slot"), mgPropWidth(1.0f)));
 		mgBoxEnd();
@@ -2687,10 +2822,13 @@ struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGopt* opts)
 //		hopts = mgOpts(mgLogic(MG_DRAG), mgPropPosition(MG_JUSTIFY,MG_CENTER,pc,0.5f), mgTag("handle"));
 //		hstyle = computeStyle(MG_NORMAL, hopts);
 //		hres = mgIcon("handle", hopts);
-		mgBoxBegin(MG_ROW, mgOpts(mgLogic(MG_DRAG), mgPropPosition(MG_JUSTIFY,MG_CENTER,pc,0.5f), mgTag("handle")));
-		hres = mgBoxEnd();
+		handle = mgBoxBegin(MG_ROW, mgOpts(mgLogic(MG_DRAG), mgPropPosition(MG_JUSTIFY,MG_CENTER,pc,0.5f), mgTag("handle")));
+		/*hres = */mgBoxEnd();
 
-	res = mgBoxEnd();
+	/*res =*/ mgBoxEnd();
+
+	hres = hitResult2(handle);
+	res = hitResult2(slider);
 
 	// TODO: reconsider pbounds.
 
@@ -2706,7 +2844,6 @@ struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGopt* opts)
 			float delta = (hres->deltamx / xrange) * (vmax - vmin);
 			*value = clampf(state->value + delta, vmin, vmax);
 		}
-		return hres;
 	}
 
 	if (res != NULL) {
@@ -2723,33 +2860,36 @@ struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGopt* opts)
 			float delta = (res->deltamx / xrange) * (vmax - vmin);
 			*value = clampf(state->value + delta, vmin, vmax);
 		}
-		return res;
 	}
 
-	return NULL;
+	return slider;
 }
 
-struct MGhit* mgProgress(float progress, struct MGopt* opts)
+unsigned int mgProgress(float progress, struct MGopt* opts)
 {
-	float pc = clampf(progress, 0.0f, 1.0f);	
+	float pc = clampf(progress, 0.0f, 1.0f);
 	mgBoxBegin(MG_ROW, mgOpts(mgTag("progress"), opts));
 		mgBoxBegin(MG_ROW, mgOpts(mgPropPosition(MG_START,MG_JUSTIFY,0,0.5f), mgAlign(MG_CENTER), mgOverflow(MG_VISIBLE), mgTag("bar"), mgPropWidth(pc)));
 		mgBoxEnd();
 	return mgBoxEnd();
 }
 
-struct MGhit* mgScrollBar(float* offset, float contentSize, float viewSize, struct MGopt* opts)
+unsigned int mgScrollBar(float* offset, float contentSize, float viewSize, struct MGopt* opts)
 {
 	struct MGhit* res = NULL;
 	struct MGhit* hres = NULL;
 	float slack = maxf(0, contentSize - viewSize);
 	float oc = minf(1.0f, *offset / maxf(1.0f, slack));
 	float pc = minf(1.0f, viewSize / maxf(1.0f, contentSize));
+	unsigned int scroll, handle;
 
-	mgBoxBegin(MG_ROW, mgOpts(mgLogic(MG_DRAG), mgTag("scroll"), opts));
-		mgBoxBegin(MG_ROW, mgOpts(mgLogic(MG_DRAG), mgPropPosition(MG_JUSTIFY,MG_JUSTIFY,oc,0.5f), mgTag("bar"), mgPropWidth(pc)));
-		hres = mgBoxEnd();
-	res = mgBoxEnd();
+	scroll = mgBoxBegin(MG_ROW, mgOpts(mgLogic(MG_DRAG), mgTag("scroll"), opts));
+		handle = mgBoxBegin(MG_ROW, mgOpts(mgLogic(MG_DRAG), mgPropPosition(MG_JUSTIFY,MG_JUSTIFY,oc,0.5f), mgTag("bar"), mgPropWidth(pc)));
+		mgBoxEnd();
+	mgBoxEnd();
+
+	res = hitResult2(scroll);
+	hres = hitResult2(handle);
 
 	if (hres != NULL) {
 		// Drag slider to scroll
@@ -2764,10 +2904,7 @@ struct MGhit* mgScrollBar(float* offset, float contentSize, float viewSize, stru
 			float delta = (hres->deltamx / xrange) * slack / (1-pc);
 			*offset = clampf(state->value + delta, 0, slack);
 		}
-		return hres;
-	}
-
-	if (res != NULL) {
+	} else if (res != NULL) {
 		// Click on the BG will jump a page worth forw/back
 		struct MGsliderState* state = (struct MGsliderState*)res->storage;
 		float delay = 0.75f;
@@ -2789,13 +2926,12 @@ struct MGhit* mgScrollBar(float* offset, float contentSize, float viewSize, stru
 			if (!res->pressed)
 				state->value = delay-delay2;
 		}
-		return res;
 	}
 
-	return NULL;
+	return scroll;
 }
 
-struct MGhit* mgInput(char* text, int maxtext, struct MGopt* opts)
+unsigned int mgInput(char* text, int maxtext, struct MGopt* opts)
 {
 	float th;
 	struct MGwidget* parent = getParent();
@@ -2806,17 +2942,17 @@ struct MGhit* mgInput(char* text, int maxtext, struct MGopt* opts)
 	w->input.text = allocTextLen(text, maxtext);
 	w->input.maxtext = maxtext;
 
-	w->style = computeStyle(getState(w), mgOpts(mgTag("input"), opts));
+	w->style = computeStyle(getState(w), mgOpts(mgTag("input"), opts), NULL);
 
 	textSize(NULL, w->style.fontSize, NULL, &th);
 	w->cwidth = DEFAULT_TEXTW;
 	w->cheight = th;
 	applySize(w);
 
-	return hitResult(w);
+	return w->id;
 }
 
-struct MGhit* mgNumber(float* value, struct MGopt* opts)
+unsigned int mgNumber(float* value, struct MGopt* opts)
 {
 	char str[32];
 	snprintf(str, sizeof(str), "%.2f", *value);
@@ -2825,7 +2961,7 @@ struct MGhit* mgNumber(float* value, struct MGopt* opts)
 	return mgInput(str, sizeof(str), mgOpts(mgTag("number"), mgWidth(DEFAULT_NUMBERW), opts));
 }
 
-struct MGhit* mgNumber3(float* x, float* y, float* z, const char* units, struct MGopt* opts)
+unsigned int mgNumber3(float* x, float* y, float* z, const char* units, struct MGopt* opts)
 {
 	mgBoxBegin(MG_ROW, mgOpts(mgTag("number3"), opts));
 		mgNumber(x, mgOpts(mgGrow(1)));
@@ -2836,7 +2972,7 @@ struct MGhit* mgNumber3(float* x, float* y, float* z, const char* units, struct 
 	return mgBoxEnd();
 }
 
-struct MGhit* mgColor(float* r, float* g, float* b, float* a, struct MGopt* opts)
+unsigned int mgColor(float* r, float* g, float* b, float* a, struct MGopt* opts)
 {
 	mgBoxBegin(MG_ROW, mgOpts(mgTag("color"), opts));
 		mgLabel("R", mgOpts()); mgNumber(r, mgOpts(mgGrow(1)));
@@ -2846,65 +2982,66 @@ struct MGhit* mgColor(float* r, float* g, float* b, float* a, struct MGopt* opts
 	return mgBoxEnd();
 }
 
-struct MGhit* mgCheckBox(const char* text, int* value, struct MGopt* opts)
+unsigned int mgCheckBox(const char* text, int* value, struct MGopt* opts)
 {
-	struct MGhit* ret = mgBoxBegin(MG_ROW, mgOpts(mgTag("checkbox"), mgAlign(MG_CENTER), mgSpacing(SPACING), mgPaddingY(BUTTON_PADY), mgLogic(MG_CLICK), opts));
+	unsigned int check = mgBoxBegin(MG_ROW, mgOpts(mgTag("checkbox"), mgAlign(MG_CENTER), mgSpacing(SPACING), mgPaddingY(BUTTON_PADY), mgLogic(MG_CLICK), opts));
 		mgText(text, mgOpts(mgTag("label"), mgGrow(1)));
 		mgBoxBegin(MG_ROW, mgOpts(mgTag("box"), mgWidth(CHECKBOX_SIZE), mgHeight(CHECKBOX_SIZE)));
 			mgIcon(*value ? "check" : NULL, mgOpts(mgTag("tick"), mgPropWidth(1.0f), mgPropHeight(1.0f)));
 		mgBoxEnd();
 	mgBoxEnd();
 	
-	if (ret != NULL)
+	if (mgClicked(check))
 		*value = !*value;
 
-	return ret;
+	return check;
 }
 
-struct MGhit* mgButton(const char* text, struct MGopt* opts)
+unsigned int mgButton(const char* text, struct MGopt* opts)
 {
-	struct MGhit* ret = mgBoxBegin(MG_ROW, mgOpts(mgTag("button"), opts));
+	mgBoxBegin(MG_ROW, mgOpts(mgTag("button"), opts));
 		mgText(text, mgOpts());
-	mgBoxEnd();
-	return ret;
+	return mgBoxEnd();
 }
 
-struct MGhit* mgIconButton(const char* icon, const char* text, struct MGopt* opts)
+unsigned int mgIconButton(const char* icon, const char* text, struct MGopt* opts)
 {
-	struct MGhit* ret = mgBoxBegin(MG_ROW, mgOpts(mgTag("button"), opts));
+	mgBoxBegin(MG_ROW, mgOpts(mgTag("button"), opts));
 		mgIcon(icon, mgOpts());
 		mgText(text, mgOpts());
-	mgBoxEnd();
-	return ret;
+	return mgBoxEnd();
 }
 
-struct MGhit* mgItem(const char* text, struct MGopt* opts)
+unsigned int mgItem(const char* text, struct MGopt* opts)
 {
 	mgBoxBegin(MG_ROW, mgOpts(mgTag("item"), opts));
 		mgText(text, mgOpts(mgGrow(1)));
 	return mgBoxEnd();
 }
 
-struct MGhit* mgLabel(const char* text, struct MGopt* opts)
+unsigned int mgLabel(const char* text, struct MGopt* opts)
 {
 	return mgText(text, mgOpts(mgTag("label"), opts));
 }
 
-struct MGhit* mgSelect(int* value, const char** choices, int nchoises, struct MGopt* opts)
+unsigned int mgSelect(int* value, const char** choices, int nchoises, struct MGopt* opts)
 {
 	int i;
-	mgBoxBegin(MG_ROW, mgOpts(mgTag("select"), opts));
+	unsigned int button = 0;
+
+	button = mgBoxBegin(MG_ROW, mgOpts(mgTag("select"), opts));
 		mgText(choices[*value], mgOpts(mgGrow(1)));
 
 //		mgIcon(CHECKBOX_SIZE, CHECKBOX_SIZE, mgOpts());
 		mgIcon("arrow-combo", mgOpts(mgTag("arrow")));
 
 	mgBoxEnd();
-	mgPopupBegin(MG_ACTIVE, MG_COL, mgOpts(mgAlign(MG_JUSTIFY)));
+	mgPopupBegin(button, MG_ACTIVE, MG_COL, mgOpts(mgAlign(MG_JUSTIFY)));
 		for (i = 0; i < nchoises; i++)
 			mgItem(choices[i], mgOpts());
 	mgPopupEnd();
-	return NULL;
+
+	return button;
 }
 
 struct MGpopupState {
@@ -2915,25 +3052,28 @@ struct MGpopupState {
 	float x, y;
 };
 
-struct MGhit* mgPopupBegin(int trigger, int dir, struct MGopt* opts)
+unsigned int mgPopupBegin(unsigned int target, int trigger, int dir, struct MGopt* opts)
 {
 	struct MGwidget* w = NULL;
 	struct MGpopupState* popup = NULL;
+	struct MGwidget* tgt = findWidget(target);
 	int show = 0;
+
+	if (tgt == NULL) return 0;
 
 	pushId(state.panelCount+1);
 
 	w = allocWidget(MG_BOX);
-	w->parent = state.previous;
+	w->parent = tgt;
 
 	popup = (struct MGpopupState*)allocTransient(w->id, sizeof(struct MGpopupState));
 	if (popup != NULL) {
 //		if (hit != NULL) {
 //			if (hit->clicked) {
 		popup->trigger = trigger;
-		if (state.previous != NULL) {
+		if (tgt != NULL) {
 			if (trigger == MG_HOVER) {
-				if ((getState(state.previous) & MG_HOVER) || popup->hover) {
+				if ((getState(tgt) & MG_HOVER) || popup->hover) {
 					popup->counter++;
 				} else {
 					popup->counter--;
@@ -2942,7 +3082,7 @@ struct MGhit* mgPopupBegin(int trigger, int dir, struct MGopt* opts)
 				}
 			}			
 			if (trigger == MG_ACTIVE) {
-				if ((getState(state.previous) & MG_ACTIVE)) {
+				if ((getState(tgt) & MG_ACTIVE)) {
 					popup->counter = 2;
 				}
 			}
@@ -2988,17 +3128,17 @@ struct MGhit* mgPopupBegin(int trigger, int dir, struct MGopt* opts)
 	w->active = show;
 	w->bubble = 0;
 	w->dir = dir;
-	w->style = computeStyle(getState(w), opts);
+	w->style = computeStyle(getState(w), opts, NULL);
 
 	pushBox(w);
 	pushTag(getTag(opts));
 
 	addPanel(w, 10000);
 
-	return hitResult(w);
+	return w->id;
 }
 
-struct MGhit* mgPopupEnd()
+unsigned int mgPopupEnd()
 {
 	struct MGwidget* w = NULL;
 	popId();
@@ -3015,9 +3155,34 @@ struct MGhit* mgPopupEnd()
 				}
 			}
 		}
-
 		layoutPanel(w);
+		return w->id;
 	}
 
-	return hitResult(w);
+	return 0;
+}
+
+int mgClicked(unsigned int id)
+{
+	return state.clicked == id ? 1 : 0;
+}
+
+int mgPressed(unsigned int id)
+{
+	return state.pressed == id ? 1 : 0;
+}
+
+int mgReleased(unsigned int id)
+{
+	return state.released == id ? 1 : 0;
+}
+
+int mgActive(unsigned int id)
+{
+	return state.active == id ? 1 : 0;
+}
+
+int mgHover(unsigned int id)
+{
+	return state.hover == id ? 1 : 0;
 }

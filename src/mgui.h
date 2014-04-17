@@ -233,35 +233,40 @@ void mgFrameEnd();
 
 int mgCreateIcon(const char* name, const char* filename);
 
-struct MGhit* mgPanelBegin(int dir, float x, float y, int zidx, struct MGopt* opts);
-struct MGhit* mgPanelEnd();
+unsigned int mgPanelBegin(int dir, float x, float y, int zidx, struct MGopt* opts);
+unsigned int mgPanelEnd();
 
-struct MGhit* mgBoxBegin(int dir, struct MGopt* opts);
-struct MGhit* mgBoxEnd();
+unsigned int mgBoxBegin(int dir, struct MGopt* opts);
+unsigned int mgBoxEnd();
 
-struct MGhit* mgText(const char* text, struct MGopt* opts);
-struct MGhit* mgParagraph(const char* text, struct MGopt* opts);
-struct MGhit* mgIcon(const char* name, struct MGopt* opts);
-struct MGhit* mgInput(char* text, int maxtext, struct MGopt* opts);
+unsigned int mgText(const char* text, struct MGopt* opts);
+unsigned int mgParagraph(const char* text, struct MGopt* opts);
+unsigned int mgIcon(const char* name, struct MGopt* opts);
+unsigned int mgInput(char* text, int maxtext, struct MGopt* opts);
 
-struct MGhit* mgCanvas(MGcanvasLogicFun logic, MGcanvasRenderFun render, void* uptr, struct MGopt* opts);
+unsigned int mgCanvas(float width, float height, MGcanvasLogicFun logic, MGcanvasRenderFun render, void* uptr, struct MGopt* opts);
 
 // Derivative
-struct MGhit* mgNumber(float* value, struct MGopt* opts);
-struct MGhit* mgSelect(int* value, const char** choices, int nchoises, struct MGopt* opts);
-struct MGhit* mgLabel(const char* text, struct MGopt* opts);
-struct MGhit* mgNumber3(float* x, float* y, float* z, const char* units, struct MGopt* opts);
-struct MGhit* mgColor(float* r, float* g, float* b, float* a, struct MGopt* opts);
-struct MGhit* mgCheckBox(const char* text, int* value, struct MGopt* opts);
-struct MGhit* mgButton(const char* text, struct MGopt* opts);
-struct MGhit* mgIconButton(const char* icon, const char* text, struct MGopt* opts);
-struct MGhit* mgItem(const char* text, struct MGopt* opts);
-struct MGhit* mgSlider(float* value, float vmin, float vmax, struct MGopt* opts);
-struct MGhit* mgProgress(float progress, struct MGopt* opts);
-struct MGhit* mgScrollBar(float* offset, float contentSize, float viewSize, struct MGopt* opts);
+unsigned int mgNumber(float* value, struct MGopt* opts);
+unsigned int mgSelect(int* value, const char** choices, int nchoises, struct MGopt* opts);
+unsigned int mgLabel(const char* text, struct MGopt* opts);
+unsigned int mgNumber3(float* x, float* y, float* z, const char* units, struct MGopt* opts);
+unsigned int mgColor(float* r, float* g, float* b, float* a, struct MGopt* opts);
+unsigned int mgCheckBox(const char* text, int* value, struct MGopt* opts);
+unsigned int mgButton(const char* text, struct MGopt* opts);
+unsigned int mgIconButton(const char* icon, const char* text, struct MGopt* opts);
+unsigned int mgItem(const char* text, struct MGopt* opts);
+unsigned int mgSlider(float* value, float vmin, float vmax, struct MGopt* opts);
+unsigned int mgProgress(float progress, struct MGopt* opts);
+unsigned int mgScrollBar(float* offset, float contentSize, float viewSize, struct MGopt* opts);
 
-struct MGhit* mgPopupBegin(int trigger, int dir, struct MGopt* opts);
-struct MGhit* mgPopupEnd();
+unsigned int mgPopupBegin(unsigned int target, int trigger, int dir, struct MGopt* opts);
+unsigned int mgPopupEnd();
 
+int mgClicked(unsigned int id);
+int mgPressed(unsigned int id);
+int mgReleased(unsigned int id);
+int mgActive(unsigned int id);
+int mgHover(unsigned int id);
 
 #endif // MGUI_H
