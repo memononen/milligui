@@ -144,6 +144,15 @@ int main()
 		int winWidth, winHeight;
 		int fbWidth, fbHeight;
 		float pxRatio;
+
+		unsigned int build = 0;
+		unsigned int fileOpen = 0;
+		unsigned int file = 0;
+		unsigned int edit = 0;
+		unsigned int tools = 0, toolsAlign = 0;
+		unsigned int view = 0;
+
+
 //		float t = glfwGetTime();
 //		float x,y,popy;
 //		struct MGhit* hit;
@@ -183,17 +192,16 @@ int main()
 //		mgBeginPanel("Menu", 0,0, winWidth, 30, MG_ROW, MG_JUSTIFY, 0, 0,0);
 
 		mgPanelBegin(MG_ROW, 0,0, 0, mgOpts(mgWidth(winWidth), mgHeight(30), mgTag("menubar"), mgAlign(MG_JUSTIFY)));
-			mgItem("File", mgOpts());
-			mgPopupBegin(MG_HOVER, MG_COL, mgOpts(mgAlign(MG_JUSTIFY)));
-				if (mgItem("Open...", mgOpts()))
-					printf("Open!\n");
+			file = mgItem("File", mgOpts());
+			mgPopupBegin(file, MG_HOVER, MG_COL, mgOpts(mgAlign(MG_JUSTIFY)));
+				fileOpen = mgItem("Open...", mgOpts());
 				mgItem("Save", mgOpts());
 				mgItem("Save As...", mgOpts());
 				mgItem("Close", mgOpts());
 			mgPopupEnd();
 
-			mgItem("Edit", mgOpts());
-			mgPopupBegin(MG_HOVER, MG_COL, mgOpts(mgAlign(MG_JUSTIFY)));
+			edit = mgItem("Edit", mgOpts());
+			mgPopupBegin(edit, MG_HOVER, MG_COL, mgOpts(mgAlign(MG_JUSTIFY)));
 				mgItem("Undo", mgOpts());
 				mgItem("Redo", mgOpts());
 				mgItem("Cut", mgOpts());
@@ -201,28 +209,29 @@ int main()
 				mgItem("Paste", mgOpts());
 			mgPopupEnd();
 
-			mgItem("Tools", mgOpts());
-			mgPopupBegin(MG_HOVER, MG_COL, mgOpts(mgAlign(MG_JUSTIFY)));
+			tools = mgItem("Tools", mgOpts());
+			mgPopupBegin(tools, MG_HOVER, MG_COL, mgOpts(mgAlign(MG_JUSTIFY)));
 				mgItem("Build", mgOpts());
 				mgItem("Clear", mgOpts());
-				mgItem("Align", mgOpts());
-				mgPopupBegin(MG_HOVER, MG_COL, mgOpts(mgAlign(MG_JUSTIFY)));
+				toolsAlign = mgItem("Align", mgOpts());
+				mgPopupBegin(toolsAlign, MG_HOVER, MG_COL, mgOpts(mgAlign(MG_JUSTIFY)));
 					mgItem("Left", mgOpts());
 					mgItem("Center", mgOpts());
 					mgItem("Right", mgOpts());
 				mgPopupEnd();
 			mgPopupEnd();
 
-			mgItem("View", mgOpts());
-			mgPopupBegin(MG_HOVER, MG_COL, mgOpts(mgAlign(MG_JUSTIFY)));
+			view = mgItem("View", mgOpts());
+			mgPopupBegin(view, MG_HOVER, MG_COL, mgOpts(mgAlign(MG_JUSTIFY)));
 				mgItem("Sidebar", mgOpts());
 				mgItem("Minimap", mgOpts());
 				mgItem("Tabs", mgOpts());
 			mgPopupEnd();
-
-//			mgParagraph("This is longer chunk of text.\nWould have used lorem ipsum but she was busy jumping over the lazy dog with the fox and all the men who came to the aid of the party.", mgOpts(mgFontSize(12)));
-
 		mgPanelEnd();
+
+		if (mgClicked(fileOpen)) {
+			printf("Open!!\n");
+		}
 
 //		mgBeginPanel("NavMesh Options", 20,50, 250, MG_AUTO, MG_COL, MG_JUSTIFY, 0, 5);
 //		mgBeginPanel("NavMesh Options", 20,50, 250, winHeight - 50, MG_COL, MG_JUSTIFY, MG_SCROLL, 5,5);
@@ -235,6 +244,16 @@ int main()
 
 		mgLabel("Opacity", mgOpts());
 		mgSlider(&opacity, 0.0f, 1.0f, mgOpts());
+
+/*
+		// TODO: different in/out?
+		float newOpacity = opacity;
+		slider = mgSlider(opacity, &newOpacity, 0.0f, 1.0f, mgOpts(mgName("opacity")));
+		if (mgChanged(slider))
+			opacity = newOpacity;
+		if (mgCommited(slider))
+			saveUndoState();
+*/		
 
 		mgLabel("Iterations", mgOpts());
 		mgNumber(&iterations, mgOpts());
@@ -250,7 +269,8 @@ int main()
 
 		mgInput(name, 64, mgOpts());
 
-		if (mgIconButton("tools", "Build", mgOpts())) {
+		build = mgIconButton("tools", "Build", mgOpts());
+		if (mgClicked(build)) {
 			printf("Build!!\n");
 		}
 
