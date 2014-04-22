@@ -190,6 +190,10 @@ struct MGwidget;
 typedef void (*MGcanvasRenderFun)(void* uptr, struct MGwidget* w, struct NVGcontext* vg, const float* view);
 typedef void (*MGcanvasLogicFun)(void* uptr, struct MGwidget* w, struct MGhit* hit);
 
+struct MGrect {
+	float x, y, width, height;
+};
+
 struct MGwidget {
 	unsigned int id;
 	float x, y, width, height;
@@ -232,6 +236,7 @@ unsigned int mgPanelEnd();
 
 unsigned int mgBoxBegin(int dir, struct MGopt* opts);
 unsigned int mgBoxEnd();
+unsigned int mgBox(struct MGopt* opts);
 
 unsigned int mgText(const char* text, struct MGopt* opts);
 unsigned int mgParagraph(const char* text, struct MGopt* opts);

@@ -444,13 +444,36 @@ int mgInit()
 		mgSpacing(SPACING)
 	), mgOpts(), mgOpts(), mgOpts());
 
+
+
+	mgCreateStyle("slider-canvas",
+		// Normal
+		mgOpts(
+			mgSpacing(SPACING),
+			mgFillColor(220,220,220,255),
+			mgBorderSize(2.0f),
+			mgContentColor(220,220,220,255)
+		),
+		// Hover
+		mgOpts(
+			mgFillColor(255,255,255,255)
+		),
+		// Active
+		mgOpts(
+			mgFillColor(32,32,32,255),
+			mgBorderColor(255,255,255,255)
+		),
+		// Focus
+		mgOpts(
+			mgBorderColor(0,192,255,255)
+		)
+	);
+
+
 	mgCreateStyle("slider",
 		// Normal
 		mgOpts(
-			mgWidth(DEFAULT_SLIDERW),
-			mgHeight(SLIDER_HANDLE+1),
-			mgSpacing(SPACING),
-			mgLogic(MG_DRAG)
+			mgSpacing(SPACING)
 //			mgFillColor(255,0,0,64)
 //			mgCornerRadius(3)
 		),
@@ -2579,6 +2602,12 @@ unsigned int mgBoxEnd()
 	return 0;
 }
 
+unsigned int mgBox(struct MGopt* opts)
+{
+	mgBoxBegin(MG_ROW, opts);
+	return mgBoxEnd();
+}
+
 unsigned int mgParagraph(const char* text, struct MGopt* opts)
 {
 	float tw, th;
@@ -2686,6 +2715,16 @@ struct MGsliderState {
 	struct MGstyle handleStyle;*/
 };
 
+static void innerBounds(struct MGwidget* w, struct MGrect* b)
+{
+	float padx = minf(w->style.paddingx, maxf(0.0f, w->width));
+	float pady = minf(w->style.paddingy, maxf(0.0f, w->height));
+	b->x = w->x + padx;
+	b->y = w->y + pady;
+	b->width = maxf(0.0f, w->width - padx*2);
+	b->height = maxf(0.0f, w->height - pady*2);
+}
+
 static void sliderDraw(void* uptr, struct MGwidget* w, struct NVGcontext* vg, const float* view)
 {
 	struct MGsliderState* input = (struct MGsliderState*)findTransient(w->id, 0, sizeof(struct MGsliderState));
@@ -2694,27 +2733,34 @@ static void sliderDraw(void* uptr, struct MGwidget* w, struct NVGcontext* vg, co
 
 	hr = maxf(2.0f, w->height - w->style.paddingy*2) / 2.0f;
 
-/*	nvgBeginPath(vg);
-	nvgRect(vg, w->x, w->y, w->width, w->height);
-	nvgFillColor(vg, nvgRGBA(255,0,0,128));
-	nvgFill(vg);*/
-
+	// Slot
 	nvgBeginPath(vg);
-	nvgMoveTo(vg, w->x+hr, (int)(w->y+w->height/2)+0.5f);
-	nvgLineTo(vg, w->x-hr + w->width, (int)(w->y+w->height/2)+0.5f);
-	nvgStrokeColor(vg, nvgRGBA(255,255,255,128));
-	nvgStrokeWidth(vg,1.0f);
+	nvgMoveTo(vg, w->x+hr, (int)(w->y+w->height/2));
+	nvgLineTo(vg, w->x-hr + w->width, (int)(w->y+w->height/2));
+	nvgStrokeColor(vg, nvgRGBA(0,0,0,64));
+	nvgStrokeWidth(vg,2.0f);
 	nvgStroke(vg);
 
+	// Handle position
 	x = w->x + hr + (input->value - input->vmin) / (input->vmax - input->vmin) * (w->width - hr*2);
 
-//	if (isStyleSet(&w->style, MG_FILLCOLOR_ARG)) {
+	// Bar
+	if (isStyleSet(&w->style, MG_CONTENTCOLOR_ARG)) {
+		nvgBeginPath(vg);
+		nvgMoveTo(vg, w->x+hr, (int)(w->y+w->height/2));
+		nvgLineTo(vg, x, (int)(w->y+w->height/2));
+		nvgStrokeColor(vg, nvgCol(w->style.contentColor));
+		nvgStrokeWidth(vg,2.0f);
+		nvgStroke(vg);
+	}
+
+	// Handle
+	if (isStyleSet(&w->style, MG_FILLCOLOR_ARG)) {
 		nvgBeginPath(vg);
 		nvgCircle(vg, x, w->y+w->height/2, hr);
-		nvgFillColor(vg, nvgRGBA(255,255,255,255));
+		nvgFillColor(vg, nvgCol(w->style.fillColor));
 		nvgFill(vg);
-//	}
-
+	}
 	if (isStyleSet(&w->style, MG_BORDERCOLOR_ARG)) {
 		float s = w->style.borderSize * 0.5f;
 		nvgBeginPath(vg);
@@ -2820,13 +2866,12 @@ unsigned int mgSlider(float* value, float vmin, float vmax, struct MGopt* opts)
 		)
 	);
 */
-	opts = mgOpts(mgTag("slider"), opts);
+	opts = mgOpts(mgLogic(MG_DRAG), mgTag("slider-canvas"), opts);
 	canvas = mgCanvas(DEFAULT_SLIDERW, SLIDER_HANDLE, sliderLogic, sliderDraw, NULL, opts);
 
 	input = (struct MGsliderState*)allocTransient(canvas, 0, sizeof(struct MGsliderState));
 	if (input != NULL) {
 		unsigned char s = getState2(canvas);
-
 		input->value = *value;
 		input->vmin = vmin;
 		input->vmax = vmax;
@@ -2855,21 +2900,21 @@ unsigned int mgSlider2(float* value, float vmin, float vmax, struct MGopt* opts)
 	struct MGstyle hstyle;
 	unsigned int slider, handle;
 
-	slider = mgBoxBegin(MG_ROW, mgOpts(mgLogic(MG_DRAG), mgTag("slider"), opts));
-
-		mgBoxBegin(MG_ROW, mgOpts(mgPropPosition(MG_JUSTIFY,MG_CENTER,0,0.5f), mgTag("slot"), mgPropWidth(1.0f)));
-		mgBoxEnd();
-
-		mgBoxBegin(MG_ROW, mgOpts(mgPropPosition(MG_START,MG_CENTER,0,0.5f), mgAlign(MG_CENTER), mgOverflow(MG_VISIBLE), mgTag("bar"), mgPropWidth(pc)));
-		mgBoxEnd();
+	slider = mgBoxBegin(MG_ROW, mgOpts(mgLogic(MG_DRAG), mgWidth(DEFAULT_SLIDERW), mgHeight(SLIDER_HANDLE+1), mgTag("slider"), opts));
+		// Slot
+		mgBox(mgOpts(mgPropPosition(MG_JUSTIFY,MG_CENTER,0,0.5f), mgTag("slot"), mgPropWidth(1.0f)));
+		// Bar
+		mgBox(mgOpts(mgPropPosition(MG_START,MG_CENTER,0,0.5f), mgAlign(MG_CENTER), mgOverflow(MG_VISIBLE), mgTag("bar"), mgPropWidth(pc)));
 
 //		hopts = mgOpts(mgLogic(MG_DRAG), mgPropPosition(MG_JUSTIFY,MG_CENTER,pc,0.5f), mgTag("handle"));
 //		hstyle = computeStyle(MG_NORMAL, hopts);
 //		hres = mgIcon("handle", hopts);
-		handle = mgBoxBegin(MG_ROW, mgOpts(mgLogic(MG_DRAG), mgPropPosition(MG_JUSTIFY,MG_CENTER,pc,0.5f), mgTag("handle")));
-		/*hres = */mgBoxEnd();
+		// Handle
+//		handle = mgBox(mgOpts(mgLogic(MG_DRAG), mgPropPosition(MG_JUSTIFY,MG_CENTER,pc,0.5f), mgTag("handle")));
+//				mgIcon(icon, mgOpts());
 
-	/*res =*/ mgBoxEnd();
+		handle = mgIcon("check", mgOpts(mgLogic(MG_DRAG), mgPropPosition(MG_JUSTIFY,MG_CENTER,pc,0.5f), mgTag("handle")));
+	mgBoxEnd();
 
 	hres = hitResult2(handle);
 	res = hitResult2(slider);
