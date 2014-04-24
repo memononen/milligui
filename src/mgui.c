@@ -12,6 +12,7 @@ static int maxi(int a, int b) { return a > b ? a : b; }
 static float minf(float a, float b) { return a < b ? a : b; }
 static float maxf(float a, float b) { return a > b ? a : b; }
 static float clampf(float a, float mn, float mx) { return a < mn ? mn : (a > mx ? mx : a); }
+static float absf(float a) { return a < 0.0f ? -a : a; }
 
 #define LABEL_SIZE 14
 #define TEXT_SIZE 18
@@ -27,16 +28,6 @@ static float clampf(float a, float mn, float mx) { return a < mn ? mn : (a > mx 
 #define CHECKBOX_SIZE (TEXT_SIZE)
 #define SCROLL_SIZE (TEXT_SIZE/4)
 #define SCROLL_PAD (SCROLL_SIZE/2)
-
-struct MGinputState {
-	int maxText;
-	int caretPos;
-	int npos;
-	int counter;
-	struct NVGglyphPosition* pos;
-	char* buf;
-};
-static struct MGinputState* allocTransientInput(struct MGwidget* w, int maxText);
 
 
 #define OPT_POOL_SIZE 1000
@@ -91,6 +82,21 @@ static char* allocTextLen(const char* text, int len)
 	textPoolSize += len;
 	return dst;
 }
+
+#define FRAMETEMP_POOL_SIZE 8000
+
+static unsigned char frameTempPool[FRAMETEMP_POOL_SIZE];
+static int frameTempPoolSize = 0;
+
+static unsigned char* allocFrameTemp(int size)
+{
+	if (frameTempPoolSize + size >= FRAMETEMP_POOL_SIZE)
+		return NULL;
+	unsigned char* dst = &frameTempPool[frameTempPoolSize]; 
+	frameTempPoolSize += size;
+	return dst;
+}
+
 
 #define MG_WIDGET_POOL_SIZE 1000
 struct MGwidget widgetPool[MG_WIDGET_POOL_SIZE];
@@ -193,8 +199,8 @@ static void deleteIcons()
 struct MGtransientHeader {
 	unsigned int id;
 	int size;
-	unsigned short counter;
-	unsigned short num;
+	short counter;
+	short num;
 };
 
 struct MGidRange {
@@ -207,6 +213,7 @@ struct MUIstate
 	float startmx, startmy;
 	float localmx, localmy;
 	float deltamx, deltamy;
+	int moved;
 	int drag;
 	int mbut;
 
@@ -253,12 +260,29 @@ static unsigned char* findTransient(unsigned int id, unsigned short num, int siz
 		struct MGtransientHeader* trans = (struct MGtransientHeader*)ptr;
 		if (trans->id == id && trans->num == num) {
 			if (trans->size == size) {
+				trans->counter = 1; // touch
 				return ptr + sizeof(struct MGtransientHeader);
 			}
 		}
 		ptr += sizeof(struct MGtransientHeader) + trans->size; 
 	}
 	return NULL;
+}
+
+static void freeTransient(unsigned int id, unsigned short num)
+{	
+	int i;
+	unsigned char* ptr = state.transientMem;
+	for (i = 0; i < state.transientCount; i++) {
+		struct MGtransientHeader* trans = (struct MGtransientHeader*)ptr;
+		if (trans->id == id && trans->num == num) {
+			// Mark for delete
+			trans->counter = 0;
+			trans->id = 0;
+			return;
+		}
+		ptr += sizeof(struct MGtransientHeader) + trans->size; 
+	}
 }
 
 static unsigned char* allocTransient(unsigned int id, unsigned short num, int size)
@@ -287,6 +311,7 @@ static unsigned char* allocTransient(unsigned int id, unsigned short num, int si
 	}
 
 	if ((state.transientMemSize + allocSize) > MG_TRANSIENT_POOL_SIZE) {
+		printf("transient pool exhausted!\n");
 		return NULL;
 	}
 
@@ -307,6 +332,33 @@ static unsigned char* allocTransient(unsigned int id, unsigned short num, int si
 
 	return ptr + sizeof(struct MGtransientHeader);
 }
+
+static void cleanUpTransients()
+{
+	int i, n = 0;
+	struct MGtransientHeader* trans;
+	unsigned char* ptr;
+	unsigned char* tail;
+
+	// Check if the transient exists.
+	ptr = tail = state.transientMem;
+
+	for (i = 0; i < state.transientCount; i++) {
+		trans = (struct MGtransientHeader*)ptr;
+		trans->counter--;
+		if (trans->counter >= 0) {
+			int size = sizeof(struct MGtransientHeader) + trans->size;
+			memmove(tail, ptr, size);
+			tail += size;
+			n++;
+		}
+		ptr += sizeof(struct MGtransientHeader) + trans->size; 
+	}
+	state.transientMemSize = (int)(tail - state.transientMem);
+	state.transientCount = n;
+}
+
+
 
 static void addPanel(struct MGwidget* w, int zidx)
 {
@@ -431,6 +483,7 @@ int mgInit()
 	widgetPoolSize = 0;
 	stylePoolSize = 0;
 	optPoolSize = 0;
+	frameTempPoolSize = 0;
 
 	// Default style
 	mgCreateStyle("text", mgOpts(
@@ -931,8 +984,9 @@ void mgTerminate()
 	deleteIcons();
 }
 
-void mgFrameBegin(struct NVGcontext* vg, int width, int height, int mx, int my, int mbut)
+void mgFrameBegin(struct NVGcontext* vg, int width, int height, float mx, float my, int mbut)
 {
+	state.moved = absf(state.mx - mx) > 0.01f || absf(state.my - my) > 0.01f;
 	state.mx = mx;
 	state.my = my;
 	state.mbut = mbut;
@@ -954,6 +1008,7 @@ void mgFrameBegin(struct NVGcontext* vg, int width, int height, int mx, int my, 
 	textPoolSize = 0;
 	widgetPoolSize = 0;
 	optPoolSize = 0;
+	frameTempPoolSize = 0;
 }
 
 static void isectBounds(float* dst, const float* src, float x, float y, float w, float h)
@@ -1091,12 +1146,30 @@ static void dumpId(struct MGwidget* box, int indent)
 } 
 */
 
+static void fireLogic(unsigned int id, int event, struct MGhit* hit)
+{
+	struct MGwidget* w = NULL;
+	if (id == 0) return;
+	w = findWidget(id);
+	if (w == NULL) return;
+	if (w->logic == NULL) return;
+	state.localmx = state.mx - w->x;
+	state.localmy = state.my - w->y;
+	w->logic(w->uptr, w, event, hit);
+}
+
 static void updateLogic(const float* bounds)
 {
 	int i;
 	struct MGwidget* hit = NULL;
-	struct MGwidget* active = NULL;
+//	struct MGwidget* active = NULL;
+//	struct MGwidget* w = NULL;
 	int deactivate = 0;
+
+	unsigned int focused = 0;
+	unsigned int blurred = 0;
+	unsigned int entered = 0;
+	unsigned int exited = 0;
 
 /*	printf("---\n");
 	for (i = 0; i < state.panelCount; i++)
@@ -1110,26 +1183,37 @@ static void updateLogic(const float* bounds)
 		}
 	}
 
-	state.hover = 0;
+//	state.hover = 0;
 	state.clicked = 0;
 	state.pressed = 0;
 	state.dragged = 0;
 	state.released = 0;
 
 	if (state.active == 0) {
-		if (hit != NULL) {
-			state.hover = hit->id;
-			if (state.mbut & MG_MOUSE_PRESSED) {
-				state.active = hit->id;
-				state.focus = hit->id;
-				state.pressed = hit->id;
-			}
+		unsigned int id = hit != NULL ? hit->id : 0;
+		if (state.hover != id) {
+			exited = state.hover;
+			entered = id;
+			state.hover = id;
+		}
+		if (state.mbut & MG_MOUSE_PRESSED) {
+			blurred = state.focus;
+			focused = id;
+			state.focus = id;
+			state.active = id;
+			state.pressed = id;
 		}
 	}
 	// Press and release can happen in same frame.
 	if (state.active != 0) {
-		if (hit != NULL && hit->id == state.active) {
-			state.hover = hit->id;
+		unsigned int id = hit != NULL ? hit->id : 0;
+		if (id == 0 || id == state.active) {
+			if (state.hover != id) {
+				exited = state.hover;
+				entered = id;
+				state.hover = id;
+			}
+//			state.hover = hit->id;
 		}
 		if (state.mbut & MG_MOUSE_RELEASED) {
 			if (state.hover == state.active)
@@ -1137,15 +1221,16 @@ static void updateLogic(const float* bounds)
 			state.released = state.active;
 			deactivate = 1;
 		} else {
-			state.dragged = state.active;
+			if (state.moved)
+				state.dragged = state.active;
 		}
 	}
 
-	for (i = 0; i < state.panelCount; i++) {
+/*	for (i = 0; i < state.panelCount; i++) {
 		struct MGwidget* child = updateState(state.panels[i], state.hover, state.active, state.focus, 0);
 		if (child != NULL)
 			active = child;
-	}
+	}*/
 
 	// Post pone deactivation so that we get atleast one frame of active state if mouse press/release during one frame.
 	if (deactivate)
@@ -1161,12 +1246,6 @@ static void updateLogic(const float* bounds)
 		state.startmx = state.startmy = 0;
 		state.drag = 0;
 	}
-	if (active != NULL) {
-		state.localmx = state.mx - active->x;
-		state.localmy = state.my - active->y;
-	} else {
-		state.localmx = state.localmy = 0;
-	}
 	if (state.drag) {
 		state.deltamx = state.mx - state.startmx;
 		state.deltamy = state.my - state.startmy;
@@ -1174,16 +1253,27 @@ static void updateLogic(const float* bounds)
 		state.deltamx = state.deltamy = 0;
 	}
 
-	state.result.clicked = state.clicked != 0;
-	state.result.pressed = state.pressed != 0;
-	state.result.dragged = state.dragged != 0;
-	state.result.released = state.released != 0;
 	state.result.mx = state.mx;
 	state.result.my = state.my;
 	state.result.deltamx = state.deltamx;
 	state.result.deltamy = state.deltamy;
 	state.result.localmx = state.localmx;
 	state.result.localmy = state.localmy;
+
+	fireLogic(blurred, MG_BLURRED, &state.result);
+	fireLogic(focused, MG_FOCUSED, &state.result);
+	fireLogic(state.pressed, MG_PRESSED, &state.result);
+	fireLogic(state.dragged, MG_DRAGGED, &state.result);
+	fireLogic(state.released, MG_RELEASED, &state.result);
+	fireLogic(state.clicked, MG_CLICKED, &state.result);
+	fireLogic(exited, MG_EXITED, &state.result);
+	fireLogic(entered, MG_ENTERED, &state.result);
+
+
+/*	state.result.clicked = state.clicked != 0;
+	state.result.pressed = state.pressed != 0;
+	state.result.dragged = state.dragged != 0;
+	state.result.released = state.released != 0;
 
 	if (active != NULL) {
 		state.result.bounds[0] = active->x;
@@ -1204,7 +1294,7 @@ static void updateLogic(const float* bounds)
 	}
 
 	if (active != NULL && active->logic != NULL)
-		active->logic(active->uptr, active, &state.result);
+		active->logic(active->uptr, active, &state.result);*/
 }
 
 static struct NVGcolor nvgCol(unsigned int col)
@@ -1327,23 +1417,23 @@ static void drawRect(struct MGwidget* w)
 	}
 }
 
-static int measureTextGlyphs(struct MGwidget* w, struct NVGglyphPosition* pos, int maxpos)
+static int measureTextGlyphs(struct MGwidget* w, const char* text, struct NVGglyphPosition* pos, int maxpos)
 {
 	nvgFontSize(state.vg, w->style.fontSize);
 	if (w->style.textAlign == MG_CENTER) {
 		nvgTextAlign(state.vg, NVG_ALIGN_CENTER|NVG_ALIGN_MIDDLE);
-		return nvgTextGlyphPositions(state.vg, w->x + w->width/2, w->y + w->height/2, w->text, NULL, NULL, pos, maxpos);
+		return nvgTextGlyphPositions(state.vg, w->x + w->width/2, w->y + w->height/2, text, NULL, NULL, pos, maxpos);
 	} else if (w->style.textAlign == MG_END) {
 		nvgTextAlign(state.vg, NVG_ALIGN_RIGHT|NVG_ALIGN_MIDDLE);
-		return nvgTextGlyphPositions(state.vg, w->x + w->width - w->style.paddingx, w->y + w->height/2, w->text, NULL, NULL, pos, maxpos);
+		return nvgTextGlyphPositions(state.vg, w->x + w->width - w->style.paddingx, w->y + w->height/2, text, NULL, NULL, pos, maxpos);
 	} else {
 		nvgTextAlign(state.vg, NVG_ALIGN_LEFT|NVG_ALIGN_MIDDLE);
-		return nvgTextGlyphPositions(state.vg, w->x + w->style.paddingx, w->y + w->height/2, w->text, NULL, NULL, pos, maxpos);
+		return nvgTextGlyphPositions(state.vg, w->x + w->style.paddingx, w->y + w->height/2, text, NULL, NULL, pos, maxpos);
 	}
 	return 0;
 }
 
-static void drawText(struct MGwidget* w)
+static void drawText(struct MGwidget* w, const char* text)
 {
 //	float bounds[4];
 //	struct NVGglyphPosition pos[100];
@@ -1354,15 +1444,15 @@ static void drawText(struct MGwidget* w)
 	if (w->style.textAlign == MG_CENTER) {
 		nvgTextAlign(state.vg, NVG_ALIGN_CENTER|NVG_ALIGN_MIDDLE);
 //		npos = nvgTextGlyphPositions(state.vg, w->x + w->width/2, w->y + w->height/2, w->text, NULL, bounds, pos, 100);
-		nvgText(state.vg, w->x + w->width/2, w->y + w->height/2, w->text, NULL);
+		nvgText(state.vg, w->x + w->width/2, w->y + w->height/2, text, NULL);
 	} else if (w->style.textAlign == MG_END) {
 		nvgTextAlign(state.vg, NVG_ALIGN_RIGHT|NVG_ALIGN_MIDDLE);
 //		npos = nvgTextGlyphPositions(state.vg, w->x + w->width - w->style.paddingx, w->y + w->height/2, w->text, NULL, bounds, pos, 100);
-		nvgText(state.vg, w->x + w->width - w->style.paddingx, w->y + w->height/2, w->text, NULL);
+		nvgText(state.vg, w->x + w->width - w->style.paddingx, w->y + w->height/2, text, NULL);
 	} else {
 		nvgTextAlign(state.vg, NVG_ALIGN_LEFT|NVG_ALIGN_MIDDLE);
 //		npos = nvgTextGlyphPositions(state.vg, w->x + w->style.paddingx, w->y + w->height/2, w->text, NULL, bounds, pos, 100);
-		nvgText(state.vg, w->x + w->style.paddingx, w->y + w->height/2, w->text, NULL);
+		nvgText(state.vg, w->x + w->style.paddingx, w->y + w->height/2, text, NULL);
 	}
 
 /*	nvgFillColor(state.vg, nvgRGBA(255,0,0,64));
@@ -1545,7 +1635,7 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 				isectBounds(wbounds, bbounds, w->x, w->y, w->width, w->height);
 				if (wbounds[2] > 0.0f && wbounds[3] > 0.0f) {
 					nvgScissor(state.vg, (int)wbounds[0], (int)wbounds[1], (int)wbounds[2], (int)wbounds[3]);
-					drawText(w);
+					drawText(w, w->text);
 				}
 				break;
 
@@ -1566,7 +1656,7 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 				break;
 
 			case MG_INPUT:
-				drawRect(w);
+/*				drawRect(w);
 				if (debug) drawDebugRect(w);
 				isectBounds(wbounds, bbounds, w->x, w->y, w->width, w->height);
 				if (wbounds[2] > 0.0f && wbounds[3] > 0.0f) {
@@ -1587,7 +1677,13 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 							}
 						}
 					}
+				}*/
+
+				isectBounds(wbounds, bbounds, w->x, w->y, w->width, w->height);
+				if (w->render != NULL && wbounds[2] > 0.0f && wbounds[3] > 0.0f) {
+					w->render(w->uptr, w, state.vg, wbounds);
 				}
+				if (debug) drawDebugRect(w);
 				break;
 
 			case MG_CANVAS:
@@ -1653,31 +1749,6 @@ static void drawPanels(const float* bounds)
 		if (state.panels[i]->active)
 			drawBox(state.panels[i], bounds);
 	}
-}
-
-static void cleanUpTransients()
-{
-	int i, n = 0;
-	struct MGtransientHeader* trans;
-	unsigned char* ptr;
-	unsigned char* tail;
-
-	// Check if the transient exists.
-	ptr = tail = state.transientMem;
-
-	for (i = 0; i < state.transientCount; i++) {
-		trans = (struct MGtransientHeader*)ptr;
-		trans->counter--;
-		if (trans->counter >= 0) {
-			int size = sizeof(struct MGtransientHeader) + trans->size;
-			memmove(tail, ptr, size);
-			tail += size;
-			n++;
-		}
-		ptr += sizeof(struct MGtransientHeader) + trans->size; 
-	}
-	state.transientMemSize = (int)(tail - state.transientMem);
-	state.transientCount = n;
 }
 
 static void offsetWidget(struct MGwidget* w, float dx, float dy)
@@ -2771,7 +2842,7 @@ static void sliderDraw(void* uptr, struct MGwidget* w, struct NVGcontext* vg, co
 	}
 }
 
-static void sliderLogic(void* uptr, struct MGwidget* w, struct MGhit* hit)
+static void sliderLogic(void* uptr, struct MGwidget* w, int event, struct MGhit* hit)
 {
 	struct MGsliderState* input = (struct MGsliderState*)findTransient(w->id, 0, sizeof(struct MGsliderState));
 	struct MGsliderState* output = (struct MGsliderState*)hit->storage;
@@ -3020,22 +3091,124 @@ unsigned int mgScrollBar(float* offset, float contentSize, float viewSize, struc
 	return scroll;
 }
 
+
+struct MGinputState {
+	int maxText;
+	int caretPos;
+	int npos;
+	int counter;
+	struct NVGglyphPosition* pos;
+	char* text;
+};
+
 static struct MGinputState* allocTransientInput(struct MGwidget* w, int maxText)
 {
 	struct MGinputState* input = (struct MGinputState*)allocTransient(w->id, 0, sizeof(struct MGinputState));
-	maxText = maxi(input->maxText, maxText);
 	if (input == NULL) return NULL;
 	input->pos = (struct NVGglyphPosition*)allocTransient(w->id, 1, sizeof(struct NVGglyphPosition)*maxText);
 	if (input->pos == NULL) return NULL;
-	input->buf = (char*)allocTransient(w->id, 2, maxText);
-	if (input->buf == NULL) return NULL;
+	input->text = (char*)allocTransient(w->id, 2, maxText);
+	if (input->text == NULL) return NULL;
 	return input;
+}
+
+static struct MGinputState* findTransientInput(struct MGwidget* w)
+{
+	struct MGinputState* input = (struct MGinputState*)findTransient(w->id, 0, sizeof(struct MGinputState));
+	if (input == NULL) return NULL;
+	input->pos = (struct NVGglyphPosition*)findTransient(w->id, 1, sizeof(struct NVGglyphPosition)*input->maxText);
+	if (input->pos == NULL) return NULL;
+	input->text = (char*)findTransient(w->id, 2, input->maxText);
+	if (input->text == NULL) return NULL;
+	return input;
+}
+
+static void freeTransientInput(struct MGwidget* w)
+{
+	freeTransient(w->id, 0);
+	freeTransient(w->id, 1);
+	freeTransient(w->id, 2);
+}
+
+struct MGinputState2
+{
+	char* text;
+	int maxText;
+};
+
+static void inputDraw(void* uptr, struct MGwidget* w, struct NVGcontext* vg, const float* view)
+{
+	struct MGinputState2* state = (struct MGinputState2*)uptr;
+	struct MGinputState* input = NULL;
+	char* text;
+	int j;
+
+	drawRect(w);
+//	if (debug) drawDebugRect(w);
+
+	if (state == NULL) return;
+	if (state->text == NULL) return;
+
+	nvgScissor(vg, (int)view[0], (int)view[1], (int)view[2], (int)view[3]);
+	drawText(w, state->text);
+
+	input = findTransientInput(w);
+
+	if (input != NULL && input->maxText > 0) {
+//							printf("input  max=%d i='%s' w='%s' pos=%p npos=%d\n", input->maxText, input->buf, w->text, input->pos, input->npos);
+		nvgFillColor(vg, nvgRGBA(255,0,0,64));
+		for (j = 0; j < input->npos; j++) {
+			struct NVGglyphPosition* p = &input->pos[j];
+			nvgBeginPath(vg);
+			nvgRect(vg, p->x, w->y, p->width, w->height);
+			nvgFill(vg);
+		}
+	}
+}
+
+static void inputLogic(void* uptr, struct MGwidget* w, int event, struct MGhit* hit)
+{
+	struct MGinputState2* state = (struct MGinputState2*)uptr;
+	struct MGinputState* input = NULL;
+	if (state == NULL || state->text == NULL) return;
+
+	if (event == MG_FOCUSED) {
+		input = (struct MGinputState*)allocTransientInput(w, state->maxText);
+		if (input == NULL) return;
+		memcpy(input->text, state->text, state->maxText);
+		input->maxText = state->maxText;
+		input->npos = measureTextGlyphs(w, input->text, input->pos, input->maxText);
+		input->caretPos = 0;
+		printf("%08x focused\n", w->id);
+	}
+	if (event == MG_BLURRED) {
+		freeTransientInput(w);
+		printf("%08x blurred\n", w->id);
+	}
+	if (evet == MG_PRESSED) {
+		input = findTransientInput(w);
+		if (input == NULL) return;
+		
+		input->caretPos = 0;
+	}
+
+/*	switch (event) {
+	case MG_FOCUSED:	printf("%08x focused\n", w->id); break;
+	case MG_BLURRED:	printf("%08x blurred\n", w->id); break;
+	case MG_CLICKED:	printf("%08x clicked\n", w->id); break;
+	case MG_PRESSED:	printf("%08x pressed\n", w->id); break;
+	case MG_RELEASED:	printf("%08x released\n", w->id); break;
+	case MG_DRAGGED:	printf("%08x dragged\n", w->id); break;
+	case MG_ENTERED:	printf("%08x entered\n", w->id); break;
+	case MG_EXITED:		printf("%08x exited\n", w->id); break;
+	}*/
 }
 
 unsigned int mgInput(char* text, int maxText, struct MGopt* opts)
 {
-	struct MGhit* res = NULL;
+//	struct MGhit* res = NULL;
 	float th;
+	struct MGinputState2* state = NULL;
 	struct MGwidget* parent = getParent();
 	struct MGwidget* w = allocWidget(MG_INPUT);
 	if (parent != NULL)
@@ -3048,8 +3221,22 @@ unsigned int mgInput(char* text, int maxText, struct MGopt* opts)
 	w->cheight = th;
 	applySize(w);
 
-	res = hitResult(w);
+	w->render = inputDraw;
+	w->logic = inputLogic;
 
+	state = (struct MGinputState2*)allocFrameTemp(sizeof(struct MGinputState2));
+	if (state != NULL) {
+		memset(state, 0, sizeof(struct MGinputState2));
+		state->text = (char*)allocFrameTemp(maxText);
+		if (state->text != NULL) {
+			state->maxText = maxText;
+			memcpy(state->text, text, maxText);
+		}
+	}
+
+	w->uptr = state;
+
+/*	res = hitResult(w);
 	if (getState(w) & MG_FOCUS) {
 		struct MGinputState* input = allocTransientInput(w, maxi(20, maxText));
 		if (input == NULL) return res;
@@ -3067,9 +3254,9 @@ unsigned int mgInput(char* text, int maxText, struct MGopt* opts)
 
 		w->uptr = input;
 
-	} else {
-		w->text = allocTextLen(text, maxText);
-	}
+	} else {*/
+//		w->text = allocTextLen(text, maxText);
+//	}
 
 	return w->id;
 }

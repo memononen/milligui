@@ -185,10 +185,21 @@ enum MGwidgetState {
 	MG_FOCUS = 1<<2,
 };
 
+enum MGwidgetEvent {
+	MG_FOCUSED,
+	MG_BLURRED,
+	MG_CLICKED,
+	MG_PRESSED,
+	MG_RELEASED,
+	MG_DRAGGED,
+	MG_ENTERED,
+	MG_EXITED,
+};
+
 struct MGwidget;
 
 typedef void (*MGcanvasRenderFun)(void* uptr, struct MGwidget* w, struct NVGcontext* vg, const float* view);
-typedef void (*MGcanvasLogicFun)(void* uptr, struct MGwidget* w, struct MGhit* hit);
+typedef void (*MGcanvasLogicFun)(void* uptr, struct MGwidget* w, int event, struct MGhit* hit);
 
 struct MGrect {
 	float x, y, width, height;
@@ -226,7 +237,7 @@ struct MGwidget {
 	struct MGwidget* parent;
 };
 
-void mgFrameBegin(struct NVGcontext* vg, int width, int height, int mx, int my, int mbut);
+void mgFrameBegin(struct NVGcontext* vg, int width, int height, float mx, float my, int mbut);
 void mgFrameEnd();
 
 int mgCreateIcon(const char* name, const char* filename);
