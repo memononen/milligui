@@ -66,6 +66,7 @@ struct NVGstate {
 	struct NVGscissor scissor;
 	float fontSize;
 	float letterSpacing;
+	float lineHeight;
 	float fontBlur;
 	int textAlign;
 	int fontId;
@@ -181,7 +182,7 @@ error:
 
 static void nvg__setDevicePixelRatio(struct NVGcontext* ctx, float ratio)
 {
-	ctx->tessTol = 0.25f * 4.0f / ratio;
+	ctx->tessTol = 1.0f / ratio;
 	ctx->distTol = 0.01f / ratio;
 	ctx->fringeWidth = 1.0f / ratio;
 	ctx->devicePxRatio = ratio;
@@ -290,13 +291,23 @@ struct NVGcolor nvgRGBf(float r, float g, float b)
 
 struct NVGcolor nvgRGBA(unsigned char r, unsigned char g, unsigned char b, unsigned char a)
 {
-	struct NVGcolor color = {r/255.0f, g/255.0f, b/255.0f, a/255.0f};
+	struct NVGcolor color;
+	// Use longer initialization to suppress warning.
+	color.r = r / 255.0f;
+	color.g = g / 255.0f;
+	color.b = b / 255.0f;
+	color.a = a / 255.0f;
 	return color;
 }
 
 struct NVGcolor nvgRGBAf(float r, float g, float b, float a)
 {
-	struct NVGcolor color = {r, g, b, a};
+	struct NVGcolor color;
+	// Use longer initialization to suppress warning.
+	color.r = r;
+	color.g = g;
+	color.b = b;
+	color.a = a;
 	return color;
 }
 
@@ -364,34 +375,33 @@ struct NVGcolor nvgHSLA(float h, float s, float l, unsigned char a)
 }
 
 
-
 static struct NVGstate* nvg__getState(struct NVGcontext* ctx)
 {
 	return &ctx->states[ctx->nstates-1];
 }
 
-static void nvg__xformIdentity(float* t)
+void nvgTransformIdentity(float* t)
 {
 	t[0] = 1.0f; t[1] = 0.0f;
 	t[2] = 0.0f; t[3] = 1.0f;
 	t[4] = 0.0f; t[5] = 0.0f;
 }
 
-static void nvg__xformTranslate(float* t, float tx, float ty)
+void nvgTransformTranslate(float* t, float tx, float ty)
 {
 	t[0] = 1.0f; t[1] = 0.0f;
 	t[2] = 0.0f; t[3] = 1.0f;
 	t[4] = tx; t[5] = ty;
 }
 
-static void nvg__xformScale(float* t, float sx, float sy)
+void nvgTransformScale(float* t, float sx, float sy)
 {
 	t[0] = sx; t[1] = 0.0f;
 	t[2] = 0.0f; t[3] = sy;
 	t[4] = 0.0f; t[5] = 0.0f;
 }
 
-static void nvg__xformRotate(float* t, float a)
+void nvgTransformRotate(float* t, float a)
 {
 	float cs = nvg__cosf(a), sn = nvg__sinf(a);
 	t[0] = cs; t[1] = sn;
@@ -399,7 +409,21 @@ static void nvg__xformRotate(float* t, float a)
 	t[4] = 0.0f; t[5] = 0.0f;
 }
 
-static void nvg__xformMultiply(float* t, float* s)
+void nvgTransformSkewX(float* t, float a)
+{
+	t[0] = 1.0f; t[1] = 0.0f;
+	t[2] = nvg__tanf(a); t[3] = 1.0f;
+	t[4] = 0.0f; t[5] = 0.0f;
+}
+
+void nvgTransformSkewY(float* t, float a)
+{
+	t[0] = 1.0f; t[1] = nvg__tanf(a);
+	t[2] = 0.0f; t[3] = 1.0f;
+	t[4] = 0.0f; t[5] = 0.0f;
+}
+
+void nvgTransformMultiply(float* t, const float* s)
 {
 	float t0 = t[0] * s[0] + t[1] * s[2];
 	float t2 = t[2] * s[0] + t[3] * s[2];
@@ -412,18 +436,51 @@ static void nvg__xformMultiply(float* t, float* s)
 	t[4] = t4;
 }
 
-static void nvg__xformPremultiply(float* t, float* s)
+void nvgTransformPremultiply(float* t, const float* s)
 {
 	float s2[6];
 	memcpy(s2, s, sizeof(float)*6);
-	nvg__xformMultiply(s2, t);
+	nvgTransformMultiply(s2, t);
 	memcpy(t, s2, sizeof(float)*6);
+}
+
+int nvgTransformInverse(float* inv, const float* t)
+{
+	double invdet, det = (double)t[0] * t[3] - (double)t[2] * t[1];
+	if (det > -1e-6 && det < 1e-6) {
+		nvgTransformIdentity(inv);
+		return 0;
+	}
+	invdet = 1.0 / det;
+	inv[0] = (float)(t[3] * invdet);
+	inv[2] = (float)(-t[2] * invdet);
+	inv[4] = (float)(((double)t[2] * t[5] - (double)t[3] * t[4]) * invdet);
+	inv[1] = (float)(-t[1] * invdet);
+	inv[3] = (float)(t[0] * invdet);
+	inv[5] = (float)(((double)t[1] * t[4] - (double)t[0] * t[5]) * invdet);
+	return 1;
+}
+
+void nvgTransformPoint(float* dx, float* dy, const float* t, float sx, float sy)
+{
+	*dx = sx*t[0] + sy*t[2] + t[4];
+	*dy = sx*t[1] + sy*t[3] + t[5];
+}
+
+float nvgDegToRad(float deg)
+{
+	return deg / 180.0f * NVG_PI;
+}
+
+float nvgRadToDeg(float rad)
+{
+	return rad / NVG_PI * 180.0f;
 }
 
 static void nvg__setPaintColor(struct NVGpaint* p, struct NVGcolor color)
 {
 	memset(p, 0, sizeof(*p));
-	nvg__xformIdentity(p->xform);
+	nvgTransformIdentity(p->xform);
 	p->radius = 0.0f;
 	p->feather = 1.0f;
 	p->innerColor = color;
@@ -459,13 +516,14 @@ void nvgReset(struct NVGcontext* ctx)
 	state->miterLimit = 10.0f;
 	state->lineCap = NVG_BUTT;
 	state->lineJoin = NVG_MITER;
-	nvg__xformIdentity(state->xform);
+	nvgTransformIdentity(state->xform);
 
 	state->scissor.extent[0] = 0.0f;
 	state->scissor.extent[1] = 0.0f;
 
 	state->fontSize = 16.0f;
 	state->letterSpacing = 0.0f;
+	state->lineHeight = 0.0f;
 	state->fontBlur = 0.0f;
 	state->textAlign = NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE;
 	state->fontId = 0;
@@ -501,39 +559,61 @@ void nvgTransform(struct NVGcontext* ctx, float a, float b, float c, float d, fl
 {
 	struct NVGstate* state = nvg__getState(ctx);
 	float t[6] = { a, b, c, d, e, f };
-	nvg__xformPremultiply(state->xform, t);
+	nvgTransformPremultiply(state->xform, t);
 }
 
 void nvgResetTransform(struct NVGcontext* ctx)
 {
 	struct NVGstate* state = nvg__getState(ctx);
-	nvg__xformIdentity(state->xform);
+	nvgTransformIdentity(state->xform);
 }
 
 void nvgTranslate(struct NVGcontext* ctx, float x, float y)
 {
 	struct NVGstate* state = nvg__getState(ctx);
 	float t[6];
-	nvg__xformTranslate(t, x,y);
-	nvg__xformPremultiply(state->xform, t);
+	nvgTransformTranslate(t, x,y);
+	nvgTransformPremultiply(state->xform, t);
 }
 
 void nvgRotate(struct NVGcontext* ctx, float angle)
 {
 	struct NVGstate* state = nvg__getState(ctx);
 	float t[6];
-	nvg__xformRotate(t, angle);
-	nvg__xformPremultiply(state->xform, t);
+	nvgTransformRotate(t, angle);
+	nvgTransformPremultiply(state->xform, t);
+}
+
+void nvgSkewX(struct NVGcontext* ctx, float angle)
+{
+	struct NVGstate* state = nvg__getState(ctx);
+	float t[6];
+	nvgTransformSkewX(t, angle);
+	nvgTransformPremultiply(state->xform, t);
+}
+
+void nvgSkewY(struct NVGcontext* ctx, float angle)
+{
+	struct NVGstate* state = nvg__getState(ctx);
+	float t[6];
+	nvgTransformSkewY(t, angle);
+	nvgTransformPremultiply(state->xform, t);
 }
 
 void nvgScale(struct NVGcontext* ctx, float x, float y)
 {
 	struct NVGstate* state = nvg__getState(ctx);
 	float t[6];
-	nvg__xformScale(t, x,y);
-	nvg__xformPremultiply(state->xform, t);
+	nvgTransformScale(t, x,y);
+	nvgTransformPremultiply(state->xform, t);
 }
 
+void nvgCurrentTransform(struct NVGcontext* ctx, float* xform)
+{
+	struct NVGstate* state = nvg__getState(ctx);
+	if (xform == NULL) return;
+	memcpy(xform, state->xform, sizeof(float)*6);
+}
 
 void nvgStrokeColor(struct NVGcontext* ctx, struct NVGcolor color)
 {
@@ -545,7 +625,7 @@ void nvgStrokePaint(struct NVGcontext* ctx, struct NVGpaint paint)
 {
 	struct NVGstate* state = nvg__getState(ctx);
 	state->stroke = paint;
-	nvg__xformMultiply(state->stroke.xform, state->xform);
+	nvgTransformMultiply(state->stroke.xform, state->xform);
 }
 
 void nvgFillColor(struct NVGcontext* ctx, struct NVGcolor color)
@@ -558,7 +638,7 @@ void nvgFillPaint(struct NVGcontext* ctx, struct NVGpaint paint)
 {
 	struct NVGstate* state = nvg__getState(ctx);
 	state->fill = paint;
-	nvg__xformMultiply(state->fill.xform, state->xform);
+	nvgTransformMultiply(state->fill.xform, state->xform);
 }
 
 int nvgCreateImage(struct NVGcontext* ctx, const char* filename)
@@ -574,7 +654,7 @@ int nvgCreateImage(struct NVGcontext* ctx, const char* filename)
 	return image;
 }
 
-int nvgCreateImageMem(struct NVGcontext* ctx, unsigned char* data, int ndata, int freeData)
+int nvgCreateImageMem(struct NVGcontext* ctx, unsigned char* data, int ndata)
 {
 	int w, h, n, image;
 	unsigned char* img = stbi_load_from_memory(data, ndata, &w, &h, &n, 4);
@@ -616,7 +696,7 @@ struct NVGpaint nvgLinearGradient(struct NVGcontext* ctx,
 	struct NVGpaint p;
 	float dx, dy, d;
 	const float large = 1e5;
-
+	NVG_NOTUSED(ctx);
 	memset(&p, 0, sizeof(p));
 
 	// Calculate transform aligned to the line
@@ -655,10 +735,10 @@ struct NVGpaint nvgRadialGradient(struct NVGcontext* ctx,
 	struct NVGpaint p;
 	float r = (inr+outr)*0.5f;
 	float f = (outr-inr);
-
+	NVG_NOTUSED(ctx);
 	memset(&p, 0, sizeof(p));
 
-	nvg__xformIdentity(p.xform);
+	nvgTransformIdentity(p.xform);
 	p.xform[4] = cx;
 	p.xform[5] = cy;
 
@@ -680,10 +760,10 @@ struct NVGpaint nvgBoxGradient(struct NVGcontext* ctx,
 							   struct NVGcolor icol, struct NVGcolor ocol)
 {
 	struct NVGpaint p;
-
+	NVG_NOTUSED(ctx);
 	memset(&p, 0, sizeof(p));
 
-	nvg__xformIdentity(p.xform);
+	nvgTransformIdentity(p.xform);
 	p.xform[4] = x+w*0.5f;
 	p.xform[5] = y+h*0.5f;
 
@@ -706,10 +786,10 @@ struct NVGpaint nvgImagePattern(struct NVGcontext* ctx,
 								int image, int repeat)
 {
 	struct NVGpaint p;
-
+	NVG_NOTUSED(ctx);
 	memset(&p, 0, sizeof(p));
 
-	nvg__xformRotate(p.xform, angle);
+	nvgTransformRotate(p.xform, angle);
 	p.xform[4] = cx;
 	p.xform[5] = cy;
 
@@ -727,10 +807,10 @@ void nvgScissor(struct NVGcontext* ctx, float x, float y, float w, float h)
 {
 	struct NVGstate* state = nvg__getState(ctx);
 
-	nvg__xformIdentity(state->scissor.xform);
+	nvgTransformIdentity(state->scissor.xform);
 	state->scissor.xform[4] = x+w*0.5f;
 	state->scissor.xform[5] = y+h*0.5f;
-	nvg__xformMultiply(state->scissor.xform, state->xform);
+	nvgTransformMultiply(state->scissor.xform, state->xform);
 
 	state->scissor.extent[0] = w*0.5f;
 	state->scissor.extent[1] = h*0.5f;
@@ -742,12 +822,6 @@ void nvgResetScissor(struct NVGcontext* ctx)
 	memset(state->scissor.xform, 0, sizeof(state->scissor.xform));
 	state->scissor.extent[0] = 0;
 	state->scissor.extent[1] = 0;
-}
-
-static void nvg__xformPt(float* dx, float* dy, float sx, float sy, const float* t)
-{
-	*dx = sx*t[0] + sy*t[2] + t[4];
-	*dy = sx*t[1] + sy*t[3] + t[5];
 }
 
 static int nvg__ptEquals(float x1, float y1, float x2, float y2, float tol)
@@ -793,17 +867,17 @@ static void nvg__appendCommands(struct NVGcontext* ctx, float* vals, int nvals)
 		int cmd = (int)vals[i];
 		switch (cmd) {
 		case NVG_MOVETO:
-			nvg__xformPt(&vals[i+1],&vals[i+2], vals[i+1],vals[i+2], state->xform);
+			nvgTransformPoint(&vals[i+1],&vals[i+2], state->xform, vals[i+1],vals[i+2]);
 			i += 3;
 			break;
 		case NVG_LINETO:
-			nvg__xformPt(&vals[i+1],&vals[i+2], vals[i+1],vals[i+2], state->xform);
+			nvgTransformPoint(&vals[i+1],&vals[i+2], state->xform, vals[i+1],vals[i+2]);
 			i += 3;
 			break;
 		case NVG_BEZIERTO:
-			nvg__xformPt(&vals[i+1],&vals[i+2], vals[i+1],vals[i+2], state->xform);
-			nvg__xformPt(&vals[i+3],&vals[i+4], vals[i+3],vals[i+4], state->xform);
-			nvg__xformPt(&vals[i+5],&vals[i+6], vals[i+5],vals[i+6], state->xform);
+			nvgTransformPoint(&vals[i+1],&vals[i+2], state->xform, vals[i+1],vals[i+2]);
+			nvgTransformPoint(&vals[i+3],&vals[i+4], state->xform, vals[i+3],vals[i+4]);
+			nvgTransformPoint(&vals[i+5],&vals[i+6], state->xform, vals[i+5],vals[i+6]);
 			i += 7;
 			break;
 		case NVG_CLOSE:
@@ -978,7 +1052,6 @@ static void nvg__tesselateBezier(struct NVGcontext* ctx,
 {
 	float x12,y12,x23,y23,x34,y34,x123,y123,x234,y234,x1234,y1234;
 	float dx,dy,d2,d3;
-	float tol = 0.5f;
 	
 	if (level > 10) return;
 
@@ -996,7 +1069,7 @@ static void nvg__tesselateBezier(struct NVGcontext* ctx,
 	d2 = nvg__absf(((x2 - x4) * dy - (y2 - y4) * dx));
 	d3 = nvg__absf(((x3 - x4) * dy - (y3 - y4) * dx));
 
-	if ((d2 + d3)*(d2 + d3) < tol * (dx*dx + dy*dy)) {
+	if ((d2 + d3)*(d2 + d3) < ctx->tessTol * (dx*dx + dy*dy)) {
 		nvg__addPoint(ctx, x4, y4, type);
 		return;
 	}
@@ -1144,6 +1217,7 @@ static struct NVGvertex* nvg__roundJoin(struct NVGvertex* dst, struct NVGpoint* 
 	float dly0 = -p0->dx;
 	float dlx1 = p1->dy;
 	float dly1 = -p1->dx;
+	NVG_NOTUSED(fringe);
 
 	if (p1->flags & NVG_PT_LEFT) {
 		float lx0,ly0,lx1,ly1,a0,a1;
@@ -1205,6 +1279,7 @@ static struct NVGvertex* nvg__bevelJoin(struct NVGvertex* dst, struct NVGpoint* 
 	float dly0 = -p0->dx;
 	float dlx1 = p1->dy;
 	float dly1 = -p1->dx;
+	NVG_NOTUSED(fringe);
 
 	if (p1->flags & NVG_PT_LEFT) {
 		nvg__chooseBevel(p1->flags & NVG_PR_INNERBEVEL, p0, p1, lw, &lx0,&ly0, &lx1,&ly1);
@@ -1293,7 +1368,6 @@ static int nvg__expandStrokeAndFill(struct NVGcontext* ctx, int feats, float w, 
 	float wo = 0, iw = 0, aa = ctx->fringeWidth;
 	int ncap = nvg__curveDivs(w, NVG_PI, ctx->tessTol / 4.0f);
 	int nleft = 0;
-	struct NVGstate* state = nvg__getState(ctx);
 
 	if (w > 0.0f) iw = 1.0f / w;
 
@@ -1780,7 +1854,6 @@ void nvgCircle(struct NVGcontext* ctx, float cx, float cy, float r)
 
 void nvgDebugDumpPathCache(struct NVGcontext* ctx)
 {
-	struct NVGstate* state = nvg__getState(ctx);
 	const struct NVGpath* path;
 	int i, j;
 
@@ -1829,9 +1902,19 @@ void nvgStroke(struct NVGcontext* ctx)
 {
 	struct NVGstate* state = nvg__getState(ctx);
 	float scale = nvg__getAverageScale(state->xform);
-	float strokeWidth = nvg__clampf(state->strokeWidth * scale, 1.0f, 20.0f);
+	float strokeWidth = nvg__clampf(state->strokeWidth * scale, 0.0f, 20.0f);
+	struct NVGpaint strokePaint = state->stroke;
 	const struct NVGpath* path;
 	int i;
+
+	if (strokeWidth < ctx->fringeWidth) {
+		// If the stroke width is less than pixel size, use alpha to emulate coverate.
+		// Since coverage is area, scale by alpha*alpha.
+		float alpha = nvg__clampf(strokeWidth / ctx->fringeWidth, 0.0f, 1.0f);
+		strokePaint.innerColor.a *= alpha*alpha;
+		strokePaint.outerColor.a *= alpha*alpha;
+		strokeWidth = ctx->fringeWidth;
+	}
 
 	nvg__flattenPaths(ctx);
 	if (ctx->params.edgeAntiAlias)
@@ -1839,7 +1922,7 @@ void nvgStroke(struct NVGcontext* ctx)
 	else
 		nvg__expandStrokeAndFill(ctx, NVG_STROKE|NVG_CAPS, strokeWidth*0.5f, state->lineCap, state->lineJoin, state->miterLimit);
 
-	ctx->params.renderStroke(ctx->params.userPtr, &state->stroke, &state->scissor, ctx->fringeWidth,
+	ctx->params.renderStroke(ctx->params.userPtr, &strokePaint, &state->scissor, ctx->fringeWidth,
 							 strokeWidth, ctx->cache->paths, ctx->cache->npaths);
 
 	// Count triangles
@@ -1874,16 +1957,22 @@ void nvgFontSize(struct NVGcontext* ctx, float size)
 	state->fontSize = size;
 }
 
-void nvgLetterSpacing(struct NVGcontext* ctx, float spacing)
+void nvgFontBlur(struct NVGcontext* ctx, float blur)
+{
+	struct NVGstate* state = nvg__getState(ctx);
+	state->fontBlur = blur;
+}
+
+void nvgTextLetterSpacing(struct NVGcontext* ctx, float spacing)
 {
 	struct NVGstate* state = nvg__getState(ctx);
 	state->letterSpacing = spacing;
 }
 
-void nvgFontBlur(struct NVGcontext* ctx, float blur)
+void nvgTextLineHeight(struct NVGcontext* ctx, float lineHeight)
 {
 	struct NVGstate* state = nvg__getState(ctx);
-	state->fontBlur = blur;
+	state->lineHeight = lineHeight;
 }
 
 void nvgTextAlign(struct NVGcontext* ctx, int align)
@@ -1946,10 +2035,10 @@ float nvgText(struct NVGcontext* ctx, float x, float y, const char* string, cons
 	while (fonsTextIterNext(ctx->fs, &iter, &q)) {
 		// Trasnform corners.
 		float c[4*2];
-		nvg__xformPt(&c[0],&c[1], q.x0*invscale, q.y0*invscale, state->xform);
-		nvg__xformPt(&c[2],&c[3], q.x1*invscale, q.y0*invscale, state->xform);
-		nvg__xformPt(&c[4],&c[5], q.x1*invscale, q.y1*invscale, state->xform);
-		nvg__xformPt(&c[6],&c[7], q.x0*invscale, q.y1*invscale, state->xform);
+		nvgTransformPoint(&c[0],&c[1], state->xform, q.x0*invscale, q.y0*invscale);
+		nvgTransformPoint(&c[2],&c[3], state->xform, q.x1*invscale, q.y0*invscale);
+		nvgTransformPoint(&c[4],&c[5], state->xform, q.x1*invscale, q.y1*invscale);
+		nvgTransformPoint(&c[6],&c[7], state->xform, q.x0*invscale, q.y1*invscale);
 		// Create triangles
 		if (nverts+6 <= cverts) {
 			nvg__vset(&verts[nverts], c[0], c[1], q.s0, q.t0); nverts++;
@@ -1961,6 +2050,7 @@ float nvgText(struct NVGcontext* ctx, float x, float y, const char* string, cons
 		}
 	}
 
+	// TODO: add back-end bit to do this just once per frame. 
 	if (fonsValidateTexture(ctx->fs, dirty)) {
 		// Update texture
 		if (ctx->fontImage != 0) {
@@ -1985,51 +2075,360 @@ float nvgText(struct NVGcontext* ctx, float x, float y, const char* string, cons
 	return iter.x;
 }
 
-struct NVGglyphBounds {
-	const char* s;
-	float x0,y0,x1,y1;
-};
-
-/*struct NVGglyphPosition {
-	const char* str;
-	float x, width;
-};*/
-
-int nvgTextGlyphPositions(struct NVGcontext* ctx, float x, float y, const char* string, const char* end, float* bounds, struct NVGglyphPosition* positions, int maxPositions)
+void nvgTextBox(struct NVGcontext* ctx, float x, float y, float breakRowWidth, const char* string, const char* end)
 {
 	struct NVGstate* state = nvg__getState(ctx);
+	struct NVGtextRow rows[2];
+	int nrows = 0, i;
+	int oldAlign = state->textAlign;
+	int haling = state->textAlign & (NVG_ALIGN_LEFT | NVG_ALIGN_CENTER | NVG_ALIGN_RIGHT);
+	int valign = state->textAlign & (NVG_ALIGN_TOP | NVG_ALIGN_MIDDLE | NVG_ALIGN_BOTTOM | NVG_ALIGN_BASELINE);
+	float lineh = 0;
+
+	if (state->fontId == FONS_INVALID) return;
+
+	nvgTextMetrics(ctx, NULL, NULL, &lineh);
+
+	state->textAlign = NVG_ALIGN_LEFT | valign;
+
+	while ((nrows = nvgTextBreakLines(ctx, string, end, breakRowWidth, rows, 2))) {
+		for (i = 0; i < nrows; i++) {
+			struct NVGtextRow* row = &rows[i];
+			if (haling & NVG_ALIGN_LEFT)
+				nvgText(ctx, x, y, row->start, row->end);
+			else if (haling & NVG_ALIGN_CENTER)
+				nvgText(ctx, x + breakRowWidth*0.5f - row->width*0.5f, y, row->start, row->end);
+			else if (haling & NVG_ALIGN_RIGHT)
+				nvgText(ctx, x + breakRowWidth - row->width, y, row->start, row->end);
+			y += lineh * state->lineHeight;
+		}
+		string = rows[nrows-1].next;
+	}
+
+	state->textAlign = oldAlign;
+}
+
+int nvgTextGlyphPositions(struct NVGcontext* ctx, float x, float y, const char* string, const char* end, struct NVGglyphPosition* positions, int maxPositions)
+{
+	struct NVGstate* state = nvg__getState(ctx);
+	float scale = nvg__getFontScale(state) * ctx->devicePxRatio;
+	float invscale = 1.0f / scale;
 	struct FONStextIter iter;
 	struct FONSquad q;
 	int npos = 0;
-	float minx, miny, maxx, maxy;
+
+	if (state->fontId == FONS_INVALID) return 0;
 
 	if (end == NULL)
 		end = string + strlen(string);
 
-	if (state->fontId == FONS_INVALID) return 0;
+	if (string == end)
+		return 0;
 
-	fonsSetSize(ctx->fs, state->fontSize);
-	fonsSetSpacing(ctx->fs, state->letterSpacing);
-	fonsSetBlur(ctx->fs, state->fontBlur);
+	fonsSetSize(ctx->fs, state->fontSize*scale);
+	fonsSetSpacing(ctx->fs, state->letterSpacing*scale);
+	fonsSetBlur(ctx->fs, state->fontBlur*scale);
 	fonsSetAlign(ctx->fs, state->textAlign);
 	fonsSetFont(ctx->fs, state->fontId);
+
+	fonsTextIterInit(ctx->fs, &iter, x*scale, y*scale, string, end);
+	while (fonsTextIterNext(ctx->fs, &iter, &q)) {
+		positions[npos].str = iter.str;
+		positions[npos].x = iter.x * invscale;
+		positions[npos].minx = q.x0 * invscale;
+		positions[npos].maxx = q.x1 * invscale;
+		npos++;
+		if (npos >= maxPositions)
+			break;
+	}
+
+	return npos;
+}
+
+enum NVGcodepointType {
+	NVG_SPACE,
+	NVG_NEWLINE,
+	NVG_CHAR,
+};
+
+int nvgTextBreakLines(struct NVGcontext* ctx, const char* string, const char* end, float breakRowWidth, struct NVGtextRow* rows, int maxRows)
+{
+	struct NVGstate* state = nvg__getState(ctx);
+	float scale = nvg__getFontScale(state) * ctx->devicePxRatio;
+	float invscale = 1.0f / scale;
+	struct FONStextIter iter;
+	struct FONSquad q;
+	int nrows = 0;
+	float rowStartX = 0;
+	float rowWidth = 0;
+	float rowMinX = 0;
+	float rowMaxX = 0;
+	const char* rowStart = NULL;
+	const char* rowEnd = NULL;
+	const char* wordStart = NULL;
+	float wordStartX = 0;
+	float wordMinX = 0;
+	const char* breakEnd = NULL;
+	float breakWidth = 0;
+	float breakMaxX = 0;
+	int type = NVG_SPACE, ptype = NVG_SPACE;
+	unsigned int pcodepoint = 0;
+
+	if (maxRows == 0) return 0;
+	if (state->fontId == FONS_INVALID) return 0;
+
+	if (end == NULL)
+		end = string + strlen(string);
+
+	if (string == end) return 0;
+
+	fonsSetSize(ctx->fs, state->fontSize*scale);
+	fonsSetSpacing(ctx->fs, state->letterSpacing*scale);
+	fonsSetBlur(ctx->fs, state->fontBlur*scale);
+	fonsSetAlign(ctx->fs, state->textAlign);
+	fonsSetFont(ctx->fs, state->fontId);
+
+	breakRowWidth *= scale;
+
+	fonsTextIterInit(ctx->fs, &iter, 0, 0, string, end);
+	while (fonsTextIterNext(ctx->fs, &iter, &q)) {
+		switch (iter.codepoint) {
+			case 9:			// \t
+			case 11:		// \v
+			case 12:		// \f
+			case 32:		// space
+			case 0x00a0:	// NBSP
+				type = NVG_SPACE;
+				break;
+			case 10:		// \n
+				type = pcodepoint == 13 ? NVG_SPACE : NVG_NEWLINE;
+				break;
+			case 13:		// \r
+				type = pcodepoint == 10 ? NVG_SPACE : NVG_NEWLINE;
+				break;
+			case 0x0085:	// NEL
+				type = NVG_NEWLINE;
+				break;
+			default:
+				type = NVG_CHAR;
+				break;
+		}
+
+		if (type == NVG_NEWLINE) {
+			// Always handle new lines.
+			rows[nrows].start = rowStart != NULL ? rowStart : iter.str;
+			rows[nrows].end = rowEnd != NULL ? rowEnd : iter.str;
+			rows[nrows].width = rowWidth * invscale;
+			rows[nrows].minx = rowMinX * invscale;
+			rows[nrows].maxx = rowMaxX * invscale;
+			rows[nrows].next = iter.next;
+			nrows++;
+			if (nrows >= maxRows)
+				return nrows;
+			// Set null break point
+			breakEnd = rowStart;
+			breakWidth = 0.0;
+			breakMaxX = 0.0;
+			// Indicate to skip the white space at the beginning of the row.
+			rowStart = NULL;
+			rowEnd = NULL;
+			rowWidth = 0;
+			rowMinX = rowMaxX = 0;
+		} else {
+			if (rowStart == NULL) {
+				// Skip white space until the beginning of the line
+				if (type == NVG_CHAR) {
+					// The current char is the row so far
+					rowStartX = iter.x;
+					rowStart = iter.str;
+					rowEnd = iter.next;
+					rowWidth = iter.nextx - rowStartX; // q.x1 - rowStartX;
+					rowMinX = q.x0 - rowStartX;
+					rowMaxX = q.x1 - rowStartX;
+					wordStart = iter.str;
+					wordStartX = iter.x;
+					wordMinX = q.x0 - rowStartX;
+					// Set null break point
+					breakEnd = rowStart;
+					breakWidth = 0.0;
+					breakMaxX = 0.0;
+				}
+			} else {
+				float nextWidth = iter.nextx - rowStartX; //q.x1 - rowStartX;
+
+				if (nextWidth > breakRowWidth) {
+					// The run length is too long, need to break to new line.
+					if (breakEnd == rowStart) {
+						// The current word is longer than the row length, just break it from here.
+						rows[nrows].start = rowStart;
+						rows[nrows].end = iter.str;
+						rows[nrows].width = rowWidth * invscale;
+						rows[nrows].minx = rowMinX * invscale;
+						rows[nrows].maxx = rowMaxX * invscale;
+						rows[nrows].next = iter.str;
+						nrows++;
+						if (nrows >= maxRows)
+							return nrows;
+						rowStartX = iter.x;
+						rowStart = iter.str;
+						rowEnd = iter.next;
+						rowWidth = iter.nextx - rowStartX;
+						rowMinX = q.x0 - rowStartX;
+						rowMaxX = q.x1 - rowStartX;
+						wordStart = iter.str;
+						wordStartX = iter.x;
+						wordMinX = q.x0 - rowStartX;
+					} else {
+						// Break the line from the end of the last word, and start new line from the begining of the new.
+						rows[nrows].start = rowStart;
+						rows[nrows].end = breakEnd;
+						rows[nrows].width = breakWidth * invscale;
+						rows[nrows].minx = rowMinX * invscale;
+						rows[nrows].maxx = breakMaxX * invscale;
+						rows[nrows].next = wordStart;
+						nrows++;
+						if (nrows >= maxRows)
+							return nrows;
+						rowStartX = wordStartX;
+						rowStart = wordStart;
+						rowEnd = iter.next;
+						rowWidth = iter.nextx - rowStartX; // q.x1 - rowStartX;
+						rowMinX = wordMinX;
+						rowMaxX = q.x1 - rowStartX;
+						// No change to the word start
+					}
+					// Set null break point
+					breakEnd = rowStart;
+					breakWidth = 0.0;
+					breakMaxX = 0.0;
+				}
+
+				// track last non-white space character
+				if (type == NVG_CHAR) {
+					rowEnd = iter.next;
+					rowWidth = iter.nextx - rowStartX; // q.x1 - rowStartX;
+					rowMaxX = q.x1 - rowStartX;
+				}
+				// track last end of a word
+				if (ptype == NVG_CHAR && (type == NVG_SPACE || type == NVG_SPACE)) {
+					breakEnd = iter.str;
+					breakWidth = rowWidth;
+					breakMaxX = rowMaxX;
+				}
+				// track last beginning of a word
+				if ((ptype == NVG_SPACE || ptype == NVG_SPACE) && type == NVG_CHAR) {
+					wordStart = iter.str;
+					wordStartX = iter.x;
+					wordMinX = q.x0 - rowStartX;
+				}
+			}
+		}
+
+		pcodepoint = iter.codepoint;
+		ptype = type;
+	}
+
+	// Break the line from the end of the last word, and start new line from the begining of the new.
+	if (rowStart != NULL) {
+		rows[nrows].start = rowStart;
+		rows[nrows].end = rowEnd;
+		rows[nrows].width = rowWidth * invscale;
+		rows[nrows].minx = rowMinX * invscale;
+		rows[nrows].maxx = rowMaxX * invscale;
+		rows[nrows].next = end;
+		nrows++;
+	}
+
+	return nrows;
+}
+
+float nvgTextBounds(struct NVGcontext* ctx, float x, float y, const char* string, const char* end, float* bounds)
+{
+	struct NVGstate* state = nvg__getState(ctx);
+	float scale = nvg__getFontScale(state) * ctx->devicePxRatio;
+	float invscale = 1.0f / scale;
+	float width;
+
+	if (state->fontId == FONS_INVALID) return 0;
+
+	fonsSetSize(ctx->fs, state->fontSize*scale);
+	fonsSetSpacing(ctx->fs, state->letterSpacing*scale);
+	fonsSetBlur(ctx->fs, state->fontBlur*scale);
+	fonsSetAlign(ctx->fs, state->textAlign);
+	fonsSetFont(ctx->fs, state->fontId);
+
+	width = fonsTextBounds(ctx->fs, x, y, string, end, bounds);
+	if (bounds != NULL) {
+		bounds[0] *= invscale;
+		bounds[1] *= invscale;
+		bounds[2] *= invscale;
+		bounds[3] *= invscale;
+	}
+	return width * invscale;
+}
+
+void nvgTextBoxBounds(struct NVGcontext* ctx, float x, float y, float breakRowWidth, const char* string, const char* end, float* bounds)
+{
+	struct NVGstate* state = nvg__getState(ctx);
+	struct NVGtextRow rows[2];
+	float scale = nvg__getFontScale(state) * ctx->devicePxRatio;
+	float invscale = 1.0f / scale;
+	int nrows = 0, i;
+	int oldAlign = state->textAlign;
+	int haling = state->textAlign & (NVG_ALIGN_LEFT | NVG_ALIGN_CENTER | NVG_ALIGN_RIGHT);
+	int valign = state->textAlign & (NVG_ALIGN_TOP | NVG_ALIGN_MIDDLE | NVG_ALIGN_BOTTOM | NVG_ALIGN_BASELINE);
+	float lineh = 0, rminy = 0, rmaxy = 0;
+	float minx, miny, maxx, maxy;
+
+	if (state->fontId == FONS_INVALID) {
+		if (bounds != NULL)
+			bounds[0] = bounds[1] = bounds[2] = bounds[3] = 0.0f;
+		return;
+	}
+
+	nvgTextMetrics(ctx, NULL, NULL, &lineh);
+
+	nvgTextMetrics(ctx, NULL, NULL, &lineh);
+
+	state->textAlign = NVG_ALIGN_LEFT | valign;
 
 	minx = maxx = x;
 	miny = maxy = y;
 
-	fonsTextIterInit(ctx->fs, &iter, x, y, string, end);
-	while (fonsTextIterNext(ctx->fs, &iter, &q)) {
-		if (positions != NULL && npos < maxPositions) {
-			positions[npos].str = iter.str;
-			positions[npos].x = q.x0;
-			positions[npos].width = q.x1 - q.x0;
-			minx = nvg__minf(minx, q.x0);
-			miny = nvg__minf(miny, q.y0);
-			maxx = nvg__maxf(maxx, q.x1);
-			maxy = nvg__maxf(maxy, q.y1);
-			npos++;
+	fonsSetSize(ctx->fs, state->fontSize*scale);
+	fonsSetSpacing(ctx->fs, state->letterSpacing*scale);
+	fonsSetBlur(ctx->fs, state->fontBlur*scale);
+	fonsSetAlign(ctx->fs, state->textAlign);
+	fonsSetFont(ctx->fs, state->fontId);
+	fonsLineBounds(ctx->fs, 0, &rminy, &rmaxy);
+	rminy *= invscale;
+	rmaxy *= invscale;
+
+	while ((nrows = nvgTextBreakLines(ctx, string, end, breakRowWidth, rows, 2))) {
+		for (i = 0; i < nrows; i++) {
+			struct NVGtextRow* row = &rows[i];
+			float rminx, rmaxx, dx = 0;
+			// Horizontal bounds
+			if (haling & NVG_ALIGN_LEFT)
+				dx = 0;
+			else if (haling & NVG_ALIGN_CENTER)
+				dx = breakRowWidth*0.5f - row->width*0.5f;
+			else if (haling & NVG_ALIGN_RIGHT)
+				dx = breakRowWidth - row->width;
+			rminx = x + row->minx + dx;
+			rmaxx = x + row->maxx + dx;
+			minx = nvg__minf(minx, rminx);
+			maxx = nvg__maxf(maxx, rmaxx);
+			// Vertical bounds.
+			miny = nvg__minf(miny, y + rminy);
+			maxy = nvg__maxf(maxy, y + rmaxy);
+
+			y += lineh * state->lineHeight;
 		}
+		string = rows[nrows-1].next;
 	}
+
+	state->textAlign = oldAlign;
 
 	if (bounds != NULL) {
 		bounds[0] = minx;
@@ -2037,36 +2436,27 @@ int nvgTextGlyphPositions(struct NVGcontext* ctx, float x, float y, const char* 
 		bounds[2] = maxx;
 		bounds[3] = maxy;
 	}
-
-	return npos;
 }
 
-float nvgTextBounds(struct NVGcontext* ctx, const char* string, const char* end, float* bounds)
+void nvgTextMetrics(struct NVGcontext* ctx, float* ascender, float* descender, float* lineh)
 {
 	struct NVGstate* state = nvg__getState(ctx);
-
-	if (state->fontId == FONS_INVALID) return 0;
-
-	fonsSetSize(ctx->fs, state->fontSize);
-	fonsSetSpacing(ctx->fs, state->letterSpacing);
-	fonsSetBlur(ctx->fs, state->fontBlur);
-	fonsSetAlign(ctx->fs, state->textAlign);
-	fonsSetFont(ctx->fs, state->fontId);
-
-	return fonsTextBounds(ctx->fs, string, end, bounds);
-}
-
-void nvgVertMetrics(struct NVGcontext* ctx, float* ascender, float* descender, float* lineh)
-{
-	struct NVGstate* state = nvg__getState(ctx);
+	float scale = nvg__getFontScale(state) * ctx->devicePxRatio;
+	float invscale = 1.0f / scale;
 
 	if (state->fontId == FONS_INVALID) return;
 
-	fonsSetSize(ctx->fs, state->fontSize);
-	fonsSetSpacing(ctx->fs, state->letterSpacing);
-	fonsSetBlur(ctx->fs, state->fontBlur);
+	fonsSetSize(ctx->fs, state->fontSize*scale);
+	fonsSetSpacing(ctx->fs, state->letterSpacing*scale);
+	fonsSetBlur(ctx->fs, state->fontBlur*scale);
 	fonsSetAlign(ctx->fs, state->textAlign);
 	fonsSetFont(ctx->fs, state->fontId);
 
 	fonsVertMetrics(ctx->fs, ascender, descender, lineh);
+	if (ascender != NULL)
+		*ascender *= invscale;
+	if (descender != NULL)
+		*descender *= invscale;
+	if (lineh != NULL)
+		*lineh *= invscale;
 }

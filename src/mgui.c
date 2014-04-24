@@ -269,7 +269,7 @@ static unsigned char* findTransient(unsigned int id, unsigned short num, int siz
 	return NULL;
 }
 
-static void freeTransient(unsigned int id, unsigned short num)
+static void freeTransient(unsigned int id, short num)
 {	
 	int i;
 	unsigned char* ptr = state.transientMem;
@@ -277,6 +277,7 @@ static void freeTransient(unsigned int id, unsigned short num)
 		struct MGtransientHeader* trans = (struct MGtransientHeader*)ptr;
 		if (trans->id == id && trans->num == num) {
 			// Mark for delete
+			printf("mark free %d/%d\n", id, num);
 			trans->counter = 0;
 			trans->id = 0;
 			return;
@@ -335,7 +336,7 @@ static unsigned char* allocTransient(unsigned int id, unsigned short num, int si
 
 static void cleanUpTransients()
 {
-	int i, n = 0;
+	int i, n = 0, size = 0;
 	struct MGtransientHeader* trans;
 	unsigned char* ptr;
 	unsigned char* tail;
@@ -345,15 +346,16 @@ static void cleanUpTransients()
 
 	for (i = 0; i < state.transientCount; i++) {
 		trans = (struct MGtransientHeader*)ptr;
+		size = sizeof(struct MGtransientHeader) + trans->size;
 		trans->counter--;
 		if (trans->counter >= 0) {
-			int size = sizeof(struct MGtransientHeader) + trans->size;
 			memmove(tail, ptr, size);
 			tail += size;
 			n++;
 		}
-		ptr += sizeof(struct MGtransientHeader) + trans->size; 
+		ptr += size;
 	}
+
 	state.transientMemSize = (int)(tail - state.transientMem);
 	state.transientCount = n;
 }
@@ -1197,8 +1199,10 @@ static void updateLogic(const float* bounds)
 			state.hover = id;
 		}
 		if (state.mbut & MG_MOUSE_PRESSED) {
-			blurred = state.focus;
-			focused = id;
+			if (state.focus != id) {
+				blurred = state.focus;
+				focused = id;
+			}
 			state.focus = id;
 			state.active = id;
 			state.pressed = id;
@@ -1422,13 +1426,13 @@ static int measureTextGlyphs(struct MGwidget* w, const char* text, struct NVGgly
 	nvgFontSize(state.vg, w->style.fontSize);
 	if (w->style.textAlign == MG_CENTER) {
 		nvgTextAlign(state.vg, NVG_ALIGN_CENTER|NVG_ALIGN_MIDDLE);
-		return nvgTextGlyphPositions(state.vg, w->x + w->width/2, w->y + w->height/2, text, NULL, NULL, pos, maxpos);
+		return nvgTextGlyphPositions(state.vg, w->x + w->width/2, w->y + w->height/2, text, NULL, pos, maxpos);
 	} else if (w->style.textAlign == MG_END) {
 		nvgTextAlign(state.vg, NVG_ALIGN_RIGHT|NVG_ALIGN_MIDDLE);
-		return nvgTextGlyphPositions(state.vg, w->x + w->width - w->style.paddingx, w->y + w->height/2, text, NULL, NULL, pos, maxpos);
+		return nvgTextGlyphPositions(state.vg, w->x + w->width - w->style.paddingx, w->y + w->height/2, text, NULL, pos, maxpos);
 	} else {
 		nvgTextAlign(state.vg, NVG_ALIGN_LEFT|NVG_ALIGN_MIDDLE);
-		return nvgTextGlyphPositions(state.vg, w->x + w->style.paddingx, w->y + w->height/2, text, NULL, NULL, pos, maxpos);
+		return nvgTextGlyphPositions(state.vg, w->x + w->style.paddingx, w->y + w->height/2, text, NULL, pos, maxpos);
 	}
 	return 0;
 }
@@ -1464,124 +1468,22 @@ static void drawText(struct MGwidget* w, const char* text)
 	}*/
 }
 
-struct MGparagraphRow {
-	const char* start;
-	const char* end;
-};
-
-static int flowParagraph(const char* str, float maxw, struct MGparagraphRow* rows, int maxRows)
-{
-	int n = 0;
-	float tw, x = 0;
-	const char* rstart = str;
-	const char* wstart = str;
-	const char* wend = str;
-
-	// Split input string into words, and arrange them on lines.
-	while (*wend) {
-		int nl = 0;
-		// Find end of word, new line or end of string
-		while (*wend) {
-			if (*wend == ' ' || *wend == '\t') {
-				nl = 0;
-				break;
-			} else if (*wend == '\n' || *wend == '\r') {
-				if (wend[0] != wend[1] && (wend[1] == '\n' || wend[1] == '\r')) wend++;
-				nl = 1;
-				break;
-			}
-			wend++;
-		}
-		// Step over delimiter.
-		if (*wend) wend++;
-
-		tw = nvgTextBounds(state.vg, wstart, wend, NULL);
-
-		if (x+tw > maxw) {
-			if (n < maxRows) {
-				rows[n].start = rstart;
-				rows[n].end = wstart;
-				n++;
-			}
-			rstart = wstart;
-			x = 0;
-		}
-		if (nl == 1) {
-			// Forced break.
-			if (n < maxRows) {
-				rows[n].start = rstart;
-				rows[n].end = wend;
-				n++;
-			}
-			rstart = wend;
-			x = 0;
-		} else {
-			x += tw;
-		}
-
-		wstart = wend;
-	}
-
-	if (n < maxRows && rstart != wend) {
-		rows[n].start = rstart;
-		rows[n].end = wend;
-		n++;
-	}
-
-/*	printf("rows:\n");
-	for (i = 0; i < n; i++) {
-		const char* s = rows[i].start;
-		const char* e = rows[i].end;
-		printf("> ");
-		for (; s != e; s++)
-			printf("%c", *s);
-		printf("\n");
-	}*/
-
-	return n;
-}
-
 static void drawParagraph(struct MGwidget* w)
 {
-	struct MGparagraphRow rows[64];
-	float th = 0;
+	float x = w->x + w->style.paddingx;
 	float y = w->y + w->style.paddingy;
-	int i, n = 0;
-
+	float width = maxf(0.0f, w->width - w->style.paddingx*2);
+	if (width < 1.0f) return;
 	nvgFillColor(state.vg, nvgCol(w->style.contentColor));
 	nvgFontSize(state.vg, w->style.fontSize);
-
-	n = flowParagraph(w->text, w->width, rows, 64);
-	nvgVertMetrics(state.vg, NULL, NULL, &th);
-	if (n == 0) return;
-	if (w->style.lineHeight > 0)
-		th *= w->style.lineHeight;
-
+	nvgTextLineHeight(state.vg, w->style.lineHeight > 0 ? w->style.lineHeight : 1);
 	if (w->style.textAlign == MG_CENTER)
-		nvgTextAlign(state.vg, NVG_ALIGN_CENTER|NVG_ALIGN_MIDDLE);
+		nvgTextAlign(state.vg, NVG_ALIGN_CENTER|NVG_ALIGN_TOP);
 	else if (w->style.textAlign == MG_END)
-		nvgTextAlign(state.vg, NVG_ALIGN_RIGHT|NVG_ALIGN_MIDDLE);
+		nvgTextAlign(state.vg, NVG_ALIGN_RIGHT|NVG_ALIGN_TOP);
 	else
-		nvgTextAlign(state.vg, NVG_ALIGN_LEFT|NVG_ALIGN_MIDDLE);
-
-	y += th/2;
-
-	for (i = 0; i < n; i++) {
-		const char* start = rows[i].start;
-		const char* end = rows[i].end;
-/*		const char* s = start;
-		printf("> ");
-		for (; s != end; s++) printf("%c", *s);
-		printf("\n");*/
-
-		if (w->style.textAlign == MG_CENTER)
-			nvgText(state.vg, w->x + w->width/2, y, start, end);
-		else if (w->style.textAlign == MG_END)
-			nvgText(state.vg, w->x + w->width - w->style.paddingx, y, start, end);
-		else
-			nvgText(state.vg, w->x + w->style.paddingx, y, start, end);
-		y += th;
-	}
+		nvgTextAlign(state.vg, NVG_ALIGN_LEFT|NVG_ALIGN_TOP);
+	nvgTextBox(state.vg, x, y, width, w->text, NULL);
 }
 
 static void drawBox(struct MGwidget* box, const float* bounds)
@@ -1800,8 +1702,8 @@ static void textSize(const char* str, float size, float* w, float* h)
 	}
 	nvgFontFace(state.vg, "sans");
 	nvgFontSize(state.vg, size);
-	tw = str != NULL ? nvgTextBounds(state.vg, str, NULL, NULL) : 0;
-	nvgVertMetrics(state.vg, NULL, NULL, &th);
+	tw = str != NULL ? nvgTextBounds(state.vg, 0,0, str, NULL, NULL) : 0;
+	nvgTextMetrics(state.vg, NULL, NULL, &th);
 	if (w) *w = tw;
 	if (h) *h = th;
 }
@@ -1809,29 +1711,17 @@ static void textSize(const char* str, float size, float* w, float* h)
 
 static void paragraphSize(const char* str, float size, float lineh, float maxw, float* w, float* h)
 {
-	struct MGparagraphRow rows[64];
-	int n;
-	float tw, th, th2;
+	float bounds[4];
 	if (state.vg == NULL) {
 		*w = *h = 0;
 		return;
 	}
 	nvgFontFace(state.vg, "sans");
 	nvgFontSize(state.vg, size);
-
-	n = flowParagraph(str, maxw, rows, 64);
-	if (n == 0) {
-		*w = *h = 0;
-		return;
-	}
-
-	nvgVertMetrics(state.vg, NULL, NULL, &th);
-	th2 = th;
-	if (lineh > 0.0f)
-		th2 *= lineh;
-
-	if (w) *w = maxw;
-	if (h) *h = (n-1) * th2 + th;
+	nvgTextLineHeight(state.vg, lineh > 0 ? lineh : 1);
+	nvgTextBoxBounds(state.vg, 0,0, maxw, str, NULL, bounds);
+	*w = bounds[2] - bounds[0];
+	*h = bounds[3] - bounds[1];
 }
 
 static void applySize(struct MGwidget* w)
@@ -3160,10 +3050,43 @@ static void inputDraw(void* uptr, struct MGwidget* w, struct NVGcontext* vg, con
 		for (j = 0; j < input->npos; j++) {
 			struct NVGglyphPosition* p = &input->pos[j];
 			nvgBeginPath(vg);
-			nvgRect(vg, p->x, w->y, p->width, w->height);
+			nvgRect(vg, p->minx, w->y, p->maxx - p->minx, w->height);
+			nvgFill(vg);
+		}
+
+		if (input->pos != NULL) {
+			float caretx = 0;
+			if (input->caretPos >= input->npos)
+				caretx = input->pos[input->npos-1].maxx;
+			else
+				caretx = input->pos[input->caretPos].x;
+			nvgFillColor(vg, nvgRGBA(255,0,0,255));
+			nvgBeginPath(vg);
+			nvgRect(vg, (int)(caretx-0.5f), w->y, 1, w->height);
 			nvgFill(vg);
 		}
 	}
+}
+
+static int findCaretPos(float x, struct NVGglyphPosition* glyphs, int nglyphs)
+{
+	float px;
+	int i, caret;
+	if (nglyphs == 0 || glyphs == NULL) return 0;
+	if (x <= glyphs[0].x)
+		return 0;
+	px = glyphs[0].x;
+	caret = nglyphs;
+	for (i = 0; i < nglyphs; i++) {
+		float x0 = glyphs[i].x;
+		float x1 = (i+1 < nglyphs) ? glyphs[i+1].x : glyphs[nglyphs-1].maxx;
+		float gx = x0 * 0.3f + x1 * 0.7f;
+		if (x >= px && x < gx)
+			caret = i;
+		px = gx;
+	}
+
+	return caret;
 }
 
 static void inputLogic(void* uptr, struct MGwidget* w, int event, struct MGhit* hit)
@@ -3179,17 +3102,21 @@ static void inputLogic(void* uptr, struct MGwidget* w, int event, struct MGhit* 
 		input->maxText = state->maxText;
 		input->npos = measureTextGlyphs(w, input->text, input->pos, input->maxText);
 		input->caretPos = 0;
-		printf("%08x focused\n", w->id);
+		printf("%d focused\n", w->id);
 	}
 	if (event == MG_BLURRED) {
 		freeTransientInput(w);
-		printf("%08x blurred\n", w->id);
+		printf("%d blurred\n", w->id);
 	}
-	if (evet == MG_PRESSED) {
+	if (event == MG_PRESSED) {
 		input = findTransientInput(w);
 		if (input == NULL) return;
-		
-		input->caretPos = 0;
+		input->caretPos = findCaretPos(hit->mx, input->pos, input->npos);
+	}
+	if (event == MG_DRAGGED) {
+		input = findTransientInput(w);
+		if (input == NULL) return;
+		input->caretPos = findCaretPos(hit->mx, input->pos, input->npos);
 	}
 
 /*	switch (event) {

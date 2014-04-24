@@ -27,20 +27,16 @@ extern "C" {
 
 struct NVGcontext;
 
-struct NVGcolor
-{
-	union
-	{
+struct NVGcolor {
+	union {
 		float rgba[4];
-		struct
-		{
+		struct {
 			float r,g,b,a;
 		};
 	};
 };
 
-struct NVGpaint
-{
+struct NVGpaint {
 	float xform[6];
 	float extent[2];
 	float radius;
@@ -90,6 +86,21 @@ enum NVGalpha {
 	NVG_STRAIGHT_ALPHA,
 	NVG_PREMULTIPLIED_ALPHA,
 };
+
+struct NVGglyphPosition {
+	const char* str;	// Position of the glyph in the input string.
+	float x;			// The x-coordinate of the logical glyph position.
+	float minx, maxx;	// The bounds of the glyph shape.
+};
+
+struct NVGtextRow {
+	const char* start;	// Pointer to the input text where the row starts.
+	const char* end;	// Pointer to the input text where the row ends (one past the last character).
+	const char* next;	// Pointer to the beginning of the next row.
+	float width;		// Logical width of the row.
+	float minx, maxx;	// Actual bounds of the row. Logical with and bounds can differ because of kerning and some parts over extending.
+};
+
 
 // Begin drawing a new frame
 // Calls to nanovg drawing API should be wrapped in nvgBeginFrame() & nvgEndFrame()
@@ -227,11 +238,63 @@ void nvgTransform(struct NVGcontext* ctx, float a, float b, float c, float d, fl
 // Translates current coordinate system.
 void nvgTranslate(struct NVGcontext* ctx, float x, float y);
 
-// Rotates current coordinate system.
+// Rotates current coordinate system. Angle is specifid in radians.
 void nvgRotate(struct NVGcontext* ctx, float angle);
+
+// Skews the current coordinate system along X axis. Angle is specifid in radians.
+void nvgSkewX(struct NVGcontext* ctx, float angle);
+
+// Skews the current coordinate system along Y axis. Angle is specifid in radians.
+void nvgSkewY(struct NVGcontext* ctx, float angle);
 
 // Scales the current coordinat system.
 void nvgScale(struct NVGcontext* ctx, float x, float y);
+
+// Stores the top part (a-f) of the current transformation matrix in to the specified buffer.
+//   [a c e]
+//   [b d f]
+//   [0 0 1]
+// There should be space for 6 floats in the return buffer for the values a-f.
+void nvgCurrentTransform(struct NVGcontext* ctx, float* xform);
+
+
+// The following functions can be used to make calculations on 2x3 transformation matrices.
+// A 2x3 matrix is representated as float[6].
+
+// Sets the transform to identity matrix.
+void nvgTransformIdentity(float* dst);
+
+// Sets the transform to translation matrix matrix.
+void nvgTransformTranslate(float* dst, float tx, float ty);
+
+// Sets the transform to scale matrix.
+void nvgTransformScale(float* dst, float sx, float sy);
+
+// Sets the transform to rotate matrix. Angle is specifid in radians.
+void nvgTransformRotate(float* dst, float a);
+
+// Sets the transform to skew-x matrix. Angle is specifid in radians.
+void nvgTransformSkewX(float* dst, float a);
+
+// Sets the transform to skew-y matrix. Angle is specifid in radians.
+void nvgTransformSkewY(float* dst, float a);
+
+// Sets the transform to the result of multiplication of two transforms, of A = A*B.
+void nvgTransformMultiply(float* dst, const float* src);
+
+// Sets the transform to the result of multiplication of two transforms, of A = B*A.
+void nvgTransformPremultiply(float* dst, const float* src);
+
+// Sets the destination to inverse of specified transform.
+// Returns 1 if the inverse could be calculated, else 0.
+int nvgTransformInverse(float* dst, const float* src);
+
+// Transform a point by given transform.
+void nvgTransformPoint(float* dstx, float* dsty, const float* xform, float srcx, float srcy);
+
+// Converts degress to radians and vice versa.
+float nvgDegToRad(float deg);
+float nvgRadToDeg(float rad);
 
 //
 // Images
@@ -243,9 +306,9 @@ void nvgScale(struct NVGcontext* ctx, float x, float y);
 // Returns handle to the image.
 int nvgCreateImage(struct NVGcontext* ctx, const char* filename);
 
-// Creates image by loading it from the specified memory chunk.
+// Creates image by loading it from the specified chunk of memory.
 // Returns handle to the image.
-int nvgCreateImageMem(struct NVGcontext* ctx, unsigned char* data, int ndata, int freeData);
+int nvgCreateImageMem(struct NVGcontext* ctx, unsigned char* data, int ndata);
 
 // Creates image from specified image data.
 // Returns handle to the image.
@@ -376,7 +439,26 @@ void nvgStroke(struct NVGcontext* ctx);
 // font size, letter spacing and text align are supported. Font blur allows you
 // to create simple text effects such as drop shadows.
 //
-// At render time the tont face can be set based on the font handles or name.
+// At render time the font face can be set based on the font handles or name.
+//
+// Font measure functions return values in local space, the calculations are
+// carried in the same resolution as the final rendering. This is done because
+// the text glyph positions are snapped to the nearest pixels sharp rendering.
+//
+// The local space means that values are not rotated or scale as per the current
+// transformation. For example if you set font size to 12, which would mean that
+// line height is 16, then regardless of the current scaling and rotation, the
+// returned line height is always 16. Some measures may vary because of the scaling
+// since aforementioned pixel snapping.
+//
+// While this may sound a little odd, the setup allows you to always render the
+// same way regardless of scaling. I.e. following works regardless of scaling:
+//
+//		const char* txt = "Text me up.";
+//		nvgTextBounds(vg, x,y, txt, NULL, bounds);
+//		nvgBeginPath(vg);
+//		nvgRoundedRect(vg, bounds[0],bounds[1], bounds[2]-bounds[0], bounds[3]-bounds[1]);
+//		nvgFill(vg);
 //
 // Note: currently only solid color fill is supported for text.
 
@@ -394,11 +476,14 @@ int nvgFindFont(struct NVGcontext* ctx, const char* name);
 // Sets the font size of current text style.
 void nvgFontSize(struct NVGcontext* ctx, float size);
 
-// Sets the letter spacing of current text style.
-void nvgLetterSpacing(struct NVGcontext* ctx, float spacing);
-
 // Sets the blur of current text style.
 void nvgFontBlur(struct NVGcontext* ctx, float blur);
+
+// Sets the letter spacing of current text style.
+void nvgTextLetterSpacing(struct NVGcontext* ctx, float spacing);
+
+// Sets the proportional line height of current text style. The line height is specified as multiple of font size. 
+void nvgTextLineHeight(struct NVGcontext* ctx, float lineHeight);
 
 // Sets the text align of current text style, see NVGaling for options.
 void nvgTextAlign(struct NVGcontext* ctx, int align);
@@ -412,22 +497,34 @@ void nvgFontFace(struct NVGcontext* ctx, const char* font);
 // Draws text string at specified location. If end is specified only the sub-string up to the end is drawn.
 float nvgText(struct NVGcontext* ctx, float x, float y, const char* string, const char* end);
 
-// Measures the specified text string. Parameter bounds should be a pointer to float[4] if 
-// the bounding box of the text should be returned. Returns the width of the measured text.
-// Current transform does not affect the measured values.
-float nvgTextBounds(struct NVGcontext* ctx, const char* string, const char* end, float* bounds);
+// Draws multi-line text string at specified location wrapped at the specified width. If end is specified only the sub-string up to the end is drawn.
+// White space is stripped at the beginning of the rows, the text is split at word boundaries or when new-line characters are encountered.
+// Words longer than the max width are slit at nearest character (i.e. no hyphenation).
+void nvgTextBox(struct NVGcontext* ctx, float x, float y, float breakRowWidth, const char* string, const char* end);
+
+// Measures the specified text string. Parameter bounds should be a pointer to float[4],
+// if the bounding box of the text should be returned. The bounds value are [xmin,ymin, xmax,ymax]
+// Returns the horizontal advance of the measured text (i.e. where the next character should drawn).
+// Measured values are returned in local coordinate space.
+float nvgTextBounds(struct NVGcontext* ctx, float x, float y, const char* string, const char* end, float* bounds);
+
+// Measures the specified multi-text string. Parameter bounds should be a pointer to float[4],
+// if the bounding box of the text should be returned. The bounds value are [xmin,ymin, xmax,ymax]
+// Measured values are returned in local coordinate space.
+void nvgTextBoxBounds(struct NVGcontext* ctx, float x, float y, float breakRowWidth, const char* string, const char* end, float* bounds);
+
+// Calculates the glyph x positions of the specified text. If end is specified only the sub-string will be used.
+// Measured values are returned in local coordinate space.
+int nvgTextGlyphPositions(struct NVGcontext* ctx, float x, float y, const char* string, const char* end, struct NVGglyphPosition* positions, int maxPositions);
 
 // Returns the vertical metrics based on the current text style.
-// Current transform does not affect the measured values.
-void nvgVertMetrics(struct NVGcontext* ctx, float* ascender, float* descender, float* lineh);
+// Measured values are returned in local coordinate space.
+void nvgTextMetrics(struct NVGcontext* ctx, float* ascender, float* descender, float* lineh);
 
-struct NVGglyphPosition {
-	const char* str;
-	float x, width;
-};
-
-int nvgTextGlyphPositions(struct NVGcontext* ctx, float x, float y, const char* string, const char* end, float* bounds, struct NVGglyphPosition* positions, int maxPositions);
-
+// Breaks the specified text into lines. If end is specified only the sub-string will be used.
+// White space is stripped at the beginning of the rows, the text is split at word boundaries or when new-line characters are encountered.
+// Words longer than the max width are slit at nearest character (i.e. no hyphenation).
+int nvgTextBreakLines(struct NVGcontext* ctx, const char* string, const char* end, float breakRowWidth, struct NVGtextRow* rows, int maxRows);
 
 //
 // Internal Render API

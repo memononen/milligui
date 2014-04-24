@@ -24,7 +24,7 @@
 #include <GLFW/glfw3.h>
 #include "nanovg.h"
 #define NANOVG_GL3_IMPLEMENTATION
-#include "nanovg_gl3buf.h"
+#include "nanovg_gl.h"
 #include "mgui.h"
 
 int mbut = 0;
