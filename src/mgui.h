@@ -154,18 +154,11 @@ struct MGopt* mgPackOptStr(unsigned char arg, const char* str);
 unsigned int mgRGBA(unsigned char r, unsigned char g, unsigned char b, unsigned char a);
 unsigned int mgCreateStyle(const char* selector, struct MGopt* normal, struct MGopt* hover, struct MGopt* active, struct MGopt* focus);
 
-void* mgTempMalloc(int size);
-
 struct MGhit {
-	unsigned char clicked;
-	unsigned char pressed;
-	unsigned char dragged;
-	unsigned char released;
 	float mx, my;
 	float deltamx, deltamy;
 	float localmx, localmy;
-	float bounds[4];
-	float pbounds[4];
+	unsigned int code;
 	unsigned char storage[128];
 };
 
@@ -194,6 +187,9 @@ enum MGwidgetEvent {
 	MG_DRAGGED,
 	MG_ENTERED,
 	MG_EXITED,
+	MG_KEYPRESSED,
+	MG_KEYRELEASED,
+	MG_CHARTYPED,
 };
 
 struct MGwidget;
@@ -237,7 +233,19 @@ struct MGwidget {
 	struct MGwidget* parent;
 };
 
-void mgFrameBegin(struct NVGcontext* vg, int width, int height, float mx, float my, int mbut);
+#define MG_MAX_INPUTKEYS 32
+struct MGkeyPress {
+	int type, code;
+};
+struct MGinputState
+{
+	float mx, my;
+	int mbut;
+	struct MGkeyPress keys[MG_MAX_INPUTKEYS];
+	int nkeys;	
+};
+
+void mgFrameBegin(struct NVGcontext* vg, int width, int height, struct MGinputState* input);
 void mgFrameEnd();
 
 int mgCreateIcon(const char* name, const char* filename);

@@ -44,19 +44,6 @@ struct MGopt* allocOpt()
 }
 
 
-#define TEMP_ALLOC_SIZE 16000
-static unsigned char tempPool[TEMP_ALLOC_SIZE];
-static int tempPoolSize = 0;
-
-void* mgTempMalloc(int size)
-{
-	if (tempPoolSize+size >= TEMP_ALLOC_SIZE)
-		return NULL;
-	tempPoolSize += size;
-	return &tempPool[tempPoolSize - size];
-}
-
-
 #define TEXT_POOL_SIZE 8000
 
 static char textPool[TEXT_POOL_SIZE];
@@ -83,18 +70,101 @@ static char* allocTextLen(const char* text, int len)
 	return dst;
 }
 
-#define FRAMETEMP_POOL_SIZE 8000
+#define INPUTTEMP_POOL_SIZE 8000
+static unsigned char inputTempPool[INPUTTEMP_POOL_SIZE];
+static int inputTempPoolSize = 0;
 
-static unsigned char frameTempPool[FRAMETEMP_POOL_SIZE];
-static int frameTempPoolSize = 0;
-
-static unsigned char* allocFrameTemp(int size)
+static unsigned char* allocInputTemp(int size)
 {
-	if (frameTempPoolSize + size >= FRAMETEMP_POOL_SIZE)
+	if (inputTempPoolSize + size >= INPUTTEMP_POOL_SIZE)
 		return NULL;
-	unsigned char* dst = &frameTempPool[frameTempPoolSize]; 
-	frameTempPoolSize += size;
+	unsigned char* dst = &inputTempPool[inputTempPoolSize]; 
+	inputTempPoolSize += size;
 	return dst;
+}
+
+#define OUTPUTTEMP_POOL_SIZE 8000
+static unsigned char outputTempPool[OUTPUTTEMP_POOL_SIZE*2];
+static int outputTempPoolSize = 0;
+
+static unsigned char* allocOutputTemp(int size)
+{
+	if (outputTempPoolSize + size >= OUTPUTTEMP_POOL_SIZE)
+		return NULL;
+	unsigned char* dst = &outputTempPool[outputTempPoolSize]; 
+	outputTempPoolSize += size;
+	return dst;
+}
+
+
+struct MGoutputResult {
+	unsigned int id;
+	union {
+		void* ptrval;
+		int ival;
+		float fval;
+	};
+};
+
+#define OUTPUTRES_POOL_SIZE 64
+struct MGoutputResult outputResPool[OUTPUTRES_POOL_SIZE];
+static int outputResPoolSize = 0;
+
+static void mgSetResultPtr(unsigned int id, void* data)
+{
+	if (outputResPoolSize + 1 >= OUTPUTRES_POOL_SIZE) return;
+	outputResPool[outputResPoolSize].id = id;
+	outputResPool[outputResPoolSize].ptrval = data;
+	outputResPoolSize++;
+}
+
+static void mgSetResultInt(unsigned int id, int data)
+{
+	if (outputResPoolSize + 1 >= OUTPUTRES_POOL_SIZE) return;
+	outputResPool[outputResPoolSize].id = id;
+	outputResPool[outputResPoolSize].ival = data;
+	outputResPoolSize++;
+}
+
+static void mgSetResultFloat(unsigned int id, float data)
+{
+	if (outputResPoolSize + 1 >= OUTPUTRES_POOL_SIZE) return;
+	outputResPool[outputResPoolSize].id = id;
+	outputResPool[outputResPoolSize].fval = data;
+	outputResPoolSize++;
+}
+
+static void* mgGetResultPtr(unsigned int id)
+{
+	int i;
+	for (i = 0; i < outputResPoolSize; i++) {
+		if (outputResPool[i].id == id) {
+			return outputResPool[i].ptrval;
+		}
+	}
+	return NULL;
+}
+
+static int* mgGetResultInt(unsigned int id)
+{
+	int i;
+	for (i = 0; i < outputResPoolSize; i++) {
+		if (outputResPool[i].id == id) {
+			return &outputResPool[i].ival;
+		}
+	}
+	return NULL;
+}
+
+static float* mgGetResultFloat(unsigned int id)
+{
+	int i;
+	for (i = 0; i < outputResPoolSize; i++) {
+		if (outputResPool[i].id == id) {
+			return &outputResPool[i].fval;
+		}
+	}
+	return NULL;
 }
 
 
@@ -108,7 +178,7 @@ struct MGnamedStyle
 	char* selector;
 	char** path;
 	int npath;
-	struct MGstyle normal;	// 0=normal, 1=hover, 2=active, 3=focus
+	struct MGstyle normal;
 	struct MGstyle hover;
 	struct MGstyle active;
 	struct MGstyle focus;
@@ -132,6 +202,27 @@ struct MGicon
 static struct MGicon* icons[MG_MAX_ICONS];
 static int iconCount = 0;
 
+
+static char* cpToUTF8(int cp, char* str)
+{
+	int n = 0;
+	if (cp < 0x80) n = 1;
+	else if (cp < 0x800) n = 2;
+	else if (cp < 0x10000) n = 3;
+	else if (cp < 0x200000) n = 4;
+	else if (cp < 0x4000000) n = 5;
+	else if (cp <= 0x7fffffff) n = 6;
+	str[n] = '\0';
+	switch (n) {
+	case 6: str[5] = 0x80 | (cp & 0x3f); cp = cp >> 6; cp |= 0x4000000;
+	case 5: str[4] = 0x80 | (cp & 0x3f); cp = cp >> 6; cp |= 0x200000;
+	case 4: str[3] = 0x80 | (cp & 0x3f); cp = cp >> 6; cp |= 0x10000;
+	case 3: str[2] = 0x80 | (cp & 0x3f); cp = cp >> 6; cp |= 0x800;
+	case 2: str[1] = 0x80 | (cp & 0x3f); cp = cp >> 6; cp |= 0xc0;
+	case 1: str[0] = cp;
+	}
+	return str;
+}
 
 static struct MGicon* findIcon(const char* name)
 {
@@ -194,9 +285,9 @@ static void deleteIcons()
 #define MG_ID_STACK_SIZE 100
 #define MG_MAX_PANELS 100
 #define MG_MAX_TAGS 100
-#define MG_TRANSIENT_POOL_SIZE 4096
+#define MG_STATE_POOL_SIZE 4096
 
-struct MGtransientHeader {
+struct MGstateHeader {
 	unsigned int id;
 	int size;
 	short counter;
@@ -207,15 +298,13 @@ struct MGidRange {
 	unsigned int base, count;
 };
 
-struct MUIstate
+struct MGcontext
 {
-	float mx, my;
+	struct MGinputState input;
 	float startmx, startmy;
-	float localmx, localmy;
 	float deltamx, deltamy;
 	int moved;
 	int drag;
-	int mbut;
 
 	unsigned int active;
 	unsigned int hover;
@@ -239,9 +328,9 @@ struct MUIstate
 	const char* tags[MG_MAX_TAGS];
 	int tagCount;
 
-	unsigned char transientMem[MG_TRANSIENT_POOL_SIZE];
-	int transientMemSize;
-	int transientCount;
+	unsigned char stateMem[MG_STATE_POOL_SIZE];
+	int stateMemSize;
+	int stateCount;
 
 	struct NVGcontext* vg;
 
@@ -250,105 +339,107 @@ struct MUIstate
 	struct MGhit result;
 };
 
-static struct MUIstate state;
+static struct MGcontext context;
 
-static unsigned char* findTransient(unsigned int id, unsigned short num, int size)
+static unsigned char* findState(unsigned int id, unsigned short num, int size)
 {	
 	int i;
-	unsigned char* ptr = state.transientMem;
-	for (i = 0; i < state.transientCount; i++) {
-		struct MGtransientHeader* trans = (struct MGtransientHeader*)ptr;
-		if (trans->id == id && trans->num == num) {
-			if (trans->size == size) {
-				trans->counter = 1; // touch
-				return ptr + sizeof(struct MGtransientHeader);
+	unsigned char* ptr = context.stateMem;
+	for (i = 0; i < context.stateCount; i++) {
+		struct MGstateHeader* state = (struct MGstateHeader*)ptr;
+		int size = sizeof(struct MGstateHeader) + state->size;
+		if (state->id == id && state->num == num) {
+			if (state->size == size) {
+				state->counter = 1; // touch
+				return ptr + sizeof(struct MGstateHeader);
 			}
 		}
-		ptr += sizeof(struct MGtransientHeader) + trans->size; 
+		ptr += size;
 	}
 	return NULL;
 }
 
-static void freeTransient(unsigned int id, short num)
+static void freeState(unsigned int id, short num)
 {	
 	int i;
-	unsigned char* ptr = state.transientMem;
-	for (i = 0; i < state.transientCount; i++) {
-		struct MGtransientHeader* trans = (struct MGtransientHeader*)ptr;
-		if (trans->id == id && trans->num == num) {
+	unsigned char* ptr = context.stateMem;
+	for (i = 0; i < context.stateCount; i++) {
+		struct MGstateHeader* state = (struct MGstateHeader*)ptr;
+		int size = sizeof(struct MGstateHeader) + state->size;
+		if (state->id == id && state->num == num) {
 			// Mark for delete
 			printf("mark free %d/%d\n", id, num);
-			trans->counter = 0;
-			trans->id = 0;
+			state->counter = 0;
+			state->id = 0;
 			return;
 		}
-		ptr += sizeof(struct MGtransientHeader) + trans->size; 
+		ptr += size;
 	}
 }
 
-static unsigned char* allocTransient(unsigned int id, unsigned short num, int size)
+static unsigned char* allocState(unsigned int id, unsigned short num, int size)
 {
 	int i;
-	struct MGtransientHeader* trans;
+	struct MGstateHeader* state;
 	unsigned char* ptr;
 	unsigned char* prev = NULL;
 	int prevSize = 0;
-	int allocSize = sizeof(struct MGtransientHeader) + size;
+	int allocSize = sizeof(struct MGstateHeader) + size;
 
 	// Check if the transient exists.
-	ptr = state.transientMem;
-	for (i = 0; i < state.transientCount; i++) {
-		trans = (struct MGtransientHeader*)ptr;
-		if (trans->id == id && trans->num == num) {
-			if (trans->size != size) {
-				allocSize = sizeof(struct MGtransientHeader) + maxi(trans->size, size);
+	ptr = context.stateMem;
+	for (i = 0; i < context.stateCount; i++) {
+		state = (struct MGstateHeader*)ptr;
+		if (state->id == id && state->num == num) {
+			if (state->size != size) {
+				allocSize = sizeof(struct MGstateHeader) + maxi(state->size, size);
 				prev = ptr;
 				break;
 			}
-			trans->counter = 1; // touch
-			return ptr + sizeof(struct MGtransientHeader);
+			state->counter = 1; // touch
+			return ptr + sizeof(struct MGstateHeader);
 		}
-		ptr += sizeof(struct MGtransientHeader) + trans->size; 
+		ptr += sizeof(struct MGstateHeader) + state->size; 
 	}
 
-	if ((state.transientMemSize + allocSize) > MG_TRANSIENT_POOL_SIZE) {
+	if ((context.stateMemSize + allocSize) > MG_TRANSIENT_POOL_SIZE) {
 		printf("transient pool exhausted!\n");
 		return NULL;
 	}
 
 	// Allocate new block
-	ptr = &state.transientMem[state.transientMemSize];
-	state.transientMemSize += allocSize; 
+	ptr = &context.stateMem[context.stateMemSize];
+	context.stateMemSize += allocSize; 
 	if (prev != NULL)
 		memcpy(ptr, prev, allocSize);
 	else
 		memset(ptr, 0, allocSize);
-	trans = (struct MGtransientHeader*)ptr;
-	trans->id = id;
-	trans->num = num;
-	trans->counter = 1;
-	trans->size = size;
+	state = (struct MGstateHeader*)ptr;
+	state->id = id;
+	state->num = num;
+	state->counter = 1;
+	state->size = size;
 
-	state.transientCount++;
+	context.stateCount++;
 
-	return ptr + sizeof(struct MGtransientHeader);
+	return ptr + sizeof(struct MGstateHeader);
 }
 
-static void cleanUpTransients()
+static void garbageCollectStates()
 {
 	int i, n = 0, size = 0;
-	struct MGtransientHeader* trans;
+	struct MGstateHeader* state;
 	unsigned char* ptr;
 	unsigned char* tail;
 
 	// Check if the transient exists.
-	ptr = tail = state.transientMem;
+	ptr = tail = context.stateMem;
 
-	for (i = 0; i < state.transientCount; i++) {
-		trans = (struct MGtransientHeader*)ptr;
-		size = sizeof(struct MGtransientHeader) + trans->size;
-		trans->counter--;
-		if (trans->counter >= 0) {
+	for (i = 0; i < context.stateCount; i++) {
+		state = (struct MGstateHeader*)ptr;
+		size = sizeof(struct MGstateHeader) + state->size;
+		state->counter--;
+		if (state->counter >= 0) {
 			memmove(tail, ptr, size);
 			tail += size;
 			n++;
@@ -356,83 +447,83 @@ static void cleanUpTransients()
 		ptr += size;
 	}
 
-	state.transientMemSize = (int)(tail - state.transientMem);
-	state.transientCount = n;
+	context.stateMemSize = (int)(tail - context.stateMem);
+	context.stateCount = n;
 }
 
 
 
 static void addPanel(struct MGwidget* w, int zidx)
 {
-	if (state.panelCount < MG_MAX_PANELS) {
-		int i, z = zidx + state.panelCount, idx = 0;
-		while (idx < state.panelCount && state.panelsz[idx] < z)
+	if (context.panelCount < MG_MAX_PANELS) {
+		int i, z = zidx + context.panelCount, idx = 0;
+		while (idx < context.panelCount && context.panelsz[idx] < z)
 			idx++;
-		for (i = state.panelCount; i >= idx; i--) {
-			state.panels[i] = state.panels[i-1];
-			state.panelsz[i] = state.panelsz[i-1];
+		for (i = context.panelCount; i >= idx; i--) {
+			context.panels[i] = context.panels[i-1];
+			context.panelsz[i] = context.panelsz[i-1];
 		}
-		state.panels[idx] = w;
-		state.panelsz[idx] = z;
-		state.panelCount++;
+		context.panels[idx] = w;
+		context.panelsz[idx] = z;
+		context.panelCount++;
 	}
 }
 
 static void pushBox(struct MGwidget* w)
 {
-	if (state.boxStackCount < MG_BOX_STACK_SIZE)
-		state.boxStack[state.boxStackCount++] = w;
+	if (context.boxStackCount < MG_BOX_STACK_SIZE)
+		context.boxStack[context.boxStackCount++] = w;
 }
 
 static struct MGwidget* popBox()
 {
-	if (state.boxStackCount > 0)
-		return state.boxStack[--state.boxStackCount];
+	if (context.boxStackCount > 0)
+		return context.boxStack[--context.boxStackCount];
 	return NULL;
 }
 
 static void pushId(int base)
 {
-	if (state.idStackCount+1 < MG_ID_STACK_SIZE) {
-		state.idStack[state.idStackCount].base = base;
-		state.idStack[state.idStackCount].count = 0;
-		state.idStackCount++;
+	if (context.idStackCount+1 < MG_ID_STACK_SIZE) {
+		context.idStack[context.idStackCount].base = base;
+		context.idStack[context.idStackCount].count = 0;
+		context.idStackCount++;
 	}
 }
 
 static void popId()
 {
-	if (state.idStackCount > 0) {
-		state.idStackCount--;
+	if (context.idStackCount > 0) {
+		context.idStackCount--;
 	}
 }
 
 static void pushTag(const char* tag)
 {
-	if (state.tagCount < MG_MAX_TAGS)
-		state.tags[state.tagCount++] = tag;
+	if (context.tagCount < MG_MAX_TAGS)
+		context.tags[context.tagCount++] = tag;
 }
 
 static void popTag()
 {
-	if (state.tagCount > 0)
-		state.tagCount--;
+	if (context.tagCount > 0)
+		context.tagCount--;
 }
 
 static struct MGwidget* getParent()
 {
-	if (state.boxStackCount == 0) return NULL;
-	return state.boxStack[state.boxStackCount-1];
+	if (context.boxStackCount == 0) return NULL;
+	return context.boxStack[context.boxStackCount-1];
 }
 
 static int genId()
 {
 	unsigned int id = 0;
-	if (state.idStackCount > 0) {
-		int idx = state.idStackCount-1;
-		id |= state.idStack[idx].base << 16;
-		id |= state.idStack[idx].count;
-		state.idStack[idx].count++;
+	if (context.idStackCount > 0) {
+		int idx = context.idStackCount-1;
+		id |= context.idStack[idx].base << 16;
+		id |= context.idStack[idx].count;
+		context.idStack[idx].count++;
 	}
 	return id;
 }
@@ -474,18 +565,18 @@ static struct MGwidget* findWidget(unsigned int id)
 
 static int inRect(float x, float y, float w, float h)
 {
-   return state.mx >= x && state.mx <= x+w && state.my >= y && state.my <= y+h;
+   return context.input.mx >= x && context.input.mx <= x+w && context.input.my >= y && context.input.my <= y+h;
 }
 
 int mgInit()
 {
-	memset(&state, 0, sizeof(state));
+	memset(&context, 0, sizeof(context));
 
 	textPoolSize = 0;
 	widgetPoolSize = 0;
 	stylePoolSize = 0;
 	optPoolSize = 0;
-	frameTempPoolSize = 0;
+	inputTempPoolSize = 0;
 
 	// Default style
 	mgCreateStyle("text", mgOpts(
@@ -986,31 +1077,28 @@ void mgTerminate()
 	deleteIcons();
 }
 
-void mgFrameBegin(struct NVGcontext* vg, int width, int height, float mx, float my, int mbut)
+void mgFrameBegin(struct NVGcontext* vg, int width, int height, struct MGinputState* input)
 {
-	state.moved = absf(state.mx - mx) > 0.01f || absf(state.my - my) > 0.01f;
-	state.mx = mx;
-	state.my = my;
-	state.mbut = mbut;
+	context.moved = absf(context.input.mx - input->mx) > 0.01f || absf(context.input.my - input->my) > 0.01f;
+	memcpy(&context.input, input, sizeof(*input));
 
-	state.width = width;
-	state.height = height;
+	context.width = width;
+	context.height = height;
 
-	state.vg = vg;
+	context.vg = vg;
 
-	state.boxStackCount = 0;
-	state.panelCount = 0;
-	state.tagCount = 0;
+	context.boxStackCount = 0;
+	context.panelCount = 0;
+	context.tagCount = 0;
 
-	state.idStackCount = 1;
-	state.idStack[0].base = 0;
-	state.idStack[0].count = 0;
+	context.idStackCount = 1;
+	context.idStack[0].base = 0;
+	context.idStack[0].count = 0;
 
-	tempPoolSize = 0;
 	textPoolSize = 0;
 	widgetPoolSize = 0;
 	optPoolSize = 0;
-	frameTempPoolSize = 0;
+	inputTempPoolSize = 0;
 }
 
 static void isectBounds(float* dst, const float* src, float x, float y, float w, float h)
@@ -1155,8 +1243,8 @@ static void fireLogic(unsigned int id, int event, struct MGhit* hit)
 	w = findWidget(id);
 	if (w == NULL) return;
 	if (w->logic == NULL) return;
-	state.localmx = state.mx - w->x;
-	state.localmy = state.my - w->y;
+	hit->localmx = context.input.mx - w->x;
+	hit->localmy = context.input.my - w->y;
 	w->logic(w->uptr, w, event, hit);
 }
 
@@ -1174,131 +1262,138 @@ static void updateLogic(const float* bounds)
 	unsigned int exited = 0;
 
 /*	printf("---\n");
-	for (i = 0; i < state.panelCount; i++)
-		dumpId(state.panels[i], 0);*/
+	for (i = 0; i < context.panelCount; i++)
+		dumpId(context.panels[i], 0);*/
 
-	for (i = 0; i < state.panelCount; i++) {
-		if (state.panels[i]->active) {
-			struct MGwidget* child = hitTest(state.panels[i], bounds);
+	for (i = 0; i < context.panelCount; i++) {
+		if (context.panels[i]->active) {
+			struct MGwidget* child = hitTest(context.panels[i], bounds);
 			if (child != NULL)
 				hit = child;
 		}
 	}
 
-//	state.hover = 0;
-	state.clicked = 0;
-	state.pressed = 0;
-	state.dragged = 0;
-	state.released = 0;
+//	context.hover = 0;
+	context.clicked = 0;
+	context.pressed = 0;
+	context.dragged = 0;
+	context.released = 0;
 
-	if (state.active == 0) {
+	if (context.active == 0) {
 		unsigned int id = hit != NULL ? hit->id : 0;
-		if (state.hover != id) {
-			exited = state.hover;
+		if (context.hover != id) {
+			exited = context.hover;
 			entered = id;
-			state.hover = id;
+			context.hover = id;
 		}
-		if (state.mbut & MG_MOUSE_PRESSED) {
-			if (state.focus != id) {
-				blurred = state.focus;
+		if (context.input.mbut & MG_MOUSE_PRESSED) {
+			if (context.focus != id) {
+				blurred = context.focus;
 				focused = id;
 			}
-			state.focus = id;
-			state.active = id;
-			state.pressed = id;
+			context.focus = id;
+			context.active = id;
+			context.pressed = id;
 		}
 	}
 	// Press and release can happen in same frame.
-	if (state.active != 0) {
+	if (context.active != 0) {
 		unsigned int id = hit != NULL ? hit->id : 0;
-		if (id == 0 || id == state.active) {
-			if (state.hover != id) {
-				exited = state.hover;
+		if (id == 0 || id == context.active) {
+			if (context.hover != id) {
+				exited = context.hover;
 				entered = id;
-				state.hover = id;
+				context.hover = id;
 			}
-//			state.hover = hit->id;
+//			context.hover = hit->id;
 		}
-		if (state.mbut & MG_MOUSE_RELEASED) {
-			if (state.hover == state.active)
-				state.clicked = state.hover;
-			state.released = state.active;
+		if (context.input.mbut & MG_MOUSE_RELEASED) {
+			if (context.hover == context.active)
+				context.clicked = context.hover;
+			context.released = context.active;
 			deactivate = 1;
 		} else {
-			if (state.moved)
-				state.dragged = state.active;
+			if (context.moved)
+				context.dragged = context.active;
 		}
 	}
 
-/*	for (i = 0; i < state.panelCount; i++) {
-		struct MGwidget* child = updateState(state.panels[i], state.hover, state.active, state.focus, 0);
+/*	for (i = 0; i < context.panelCount; i++) {
+		struct MGwidget* child = updateState(context.panels[i], context.hover, context.active, context.focus, 0);
 		if (child != NULL)
 			active = child;
 	}*/
 
 	// Post pone deactivation so that we get atleast one frame of active state if mouse press/release during one frame.
 	if (deactivate)
-		state.active = 0;
+		context.active = 0;
 
 	// Update mouse positions.
-	if (state.mbut & MG_MOUSE_PRESSED) {
-		state.startmx = state.mx;
-		state.startmy = state.my;
-		state.drag = 1;
+	if (context.input.mbut & MG_MOUSE_PRESSED) {
+		context.startmx = context.input.mx;
+		context.startmy = context.input.my;
+		context.drag = 1;
 	}
-	if (state.mbut & MG_MOUSE_RELEASED) {
-		state.startmx = state.startmy = 0;
-		state.drag = 0;
-	}
-	if (state.drag) {
-		state.deltamx = state.mx - state.startmx;
-		state.deltamy = state.my - state.startmy;
+	if (context.drag) {
+		context.deltamx = context.input.mx - context.startmx;
+		context.deltamy = context.input.my - context.startmy;
 	} else {
-		state.deltamx = state.deltamy = 0;
+		context.deltamx = context.deltamy = 0;
+	}
+	if (context.input.mbut & MG_MOUSE_RELEASED) {
+		context.startmx = context.startmy = 0;
+		context.drag = 0;
 	}
 
-	state.result.mx = state.mx;
-	state.result.my = state.my;
-	state.result.deltamx = state.deltamx;
-	state.result.deltamy = state.deltamy;
-	state.result.localmx = state.localmx;
-	state.result.localmy = state.localmy;
+	context.result.code = 0;
+	context.result.mx = context.input.mx;
+	context.result.my = context.input.my;
+	context.result.deltamx = context.deltamx;
+	context.result.deltamy = context.deltamy;
 
-	fireLogic(blurred, MG_BLURRED, &state.result);
-	fireLogic(focused, MG_FOCUSED, &state.result);
-	fireLogic(state.pressed, MG_PRESSED, &state.result);
-	fireLogic(state.dragged, MG_DRAGGED, &state.result);
-	fireLogic(state.released, MG_RELEASED, &state.result);
-	fireLogic(state.clicked, MG_CLICKED, &state.result);
-	fireLogic(exited, MG_EXITED, &state.result);
-	fireLogic(entered, MG_ENTERED, &state.result);
+	fireLogic(blurred, MG_BLURRED, &context.result);
+	fireLogic(focused, MG_FOCUSED, &context.result);
+	fireLogic(context.pressed, MG_PRESSED, &context.result);
+	fireLogic(context.dragged, MG_DRAGGED, &context.result);
+	fireLogic(context.released, MG_RELEASED, &context.result);
+	fireLogic(context.clicked, MG_CLICKED, &context.result);
+	fireLogic(exited, MG_EXITED, &context.result);
+	fireLogic(entered, MG_ENTERED, &context.result);
+
+	if (context.focus != 0) {
+		for (i = 0; i < context.input.nkeys; i++) {
+			context.result.code = context.input.keys[i].code;
+			fireLogic(context.focus, context.input.keys[i].type, &context.result);
+		}
+	}
+	context.input.nkeys = 0;
 
 
-/*	state.result.clicked = state.clicked != 0;
-	state.result.pressed = state.pressed != 0;
-	state.result.dragged = state.dragged != 0;
-	state.result.released = state.released != 0;
+/*	context.result.clicked = context.clicked != 0;
+	context.result.pressed = context.pressed != 0;
+	context.result.dragged = context.dragged != 0;
+	context.result.released = context.released != 0;
 
 	if (active != NULL) {
-		state.result.bounds[0] = active->x;
-		state.result.bounds[1] = active->y;
-		state.result.bounds[2] = active->width;
-		state.result.bounds[3] = active->height;
+		context.result.bounds[0] = active->x;
+		context.result.bounds[1] = active->y;
+		context.result.bounds[2] = active->width;
+		context.result.bounds[3] = active->height;
 		if (active->parent != NULL) {
-			state.result.pbounds[0] = active->parent->x;
-			state.result.pbounds[1] = active->parent->y;
-			state.result.pbounds[2] = active->parent->width;
-			state.result.pbounds[3] = active->parent->height;
+			context.result.pbounds[0] = active->parent->x;
+			context.result.pbounds[1] = active->parent->y;
+			context.result.pbounds[2] = active->parent->width;
+			context.result.pbounds[3] = active->parent->height;
 		} else {
-			state.result.pbounds[0] = state.result.pbounds[1] = state.result.pbounds[2] = state.result.pbounds[3] = 0;
+			context.result.pbounds[0] = context.result.pbounds[1] = context.result.pbounds[2] = context.result.pbounds[3] = 0;
 		}
 	} else {
-		state.result.bounds[0] = state.result.bounds[1] = state.result.bounds[2] = state.result.bounds[3] = 0;
-		state.result.pbounds[0] = state.result.pbounds[1] = state.result.pbounds[2] = state.result.pbounds[3] = 0;
+		context.result.bounds[0] = context.result.bounds[1] = context.result.bounds[2] = context.result.bounds[3] = 0;
+		context.result.pbounds[0] = context.result.pbounds[1] = context.result.pbounds[2] = context.result.pbounds[3] = 0;
 	}
 
 	if (active != NULL && active->logic != NULL)
-		active->logic(active->uptr, active, &state.result);*/
+		active->logic(active->uptr, active, &context.result);*/
 }
 
 static struct NVGcolor nvgCol(unsigned int col)
@@ -1314,17 +1409,17 @@ static struct NVGcolor nvgCol(unsigned int col)
 static void drawDebugRect(struct MGwidget* w)
 {
 	// round
-/*	nvgBeginPath(state.vg);
-	nvgRect(state.vg, w->x + w->style.paddingx+0.5f, w->y + w->style.paddingy+0.5f, w->width - w->style.paddingx*2, w->height - w->style.paddingy*2);
-	nvgStrokeWidth(state.vg, 1.0f);
-	nvgStrokeColor(state.vg, nvgRGBA(255,0,0,128));
-	nvgStroke(state.vg);*/
+/*	nvgBeginPath(context.vg);
+	nvgRect(context.vg, w->x + w->style.paddingx+0.5f, w->y + w->style.paddingy+0.5f, w->width - w->style.paddingx*2, w->height - w->style.paddingy*2);
+	nvgStrokeWidth(context.vg, 1.0f);
+	nvgStrokeColor(context.vg, nvgRGBA(255,0,0,128));
+	nvgStroke(context.vg);*/
 
-	nvgBeginPath(state.vg);
-	nvgRect(state.vg, w->x + w->style.paddingx+0.5f, w->y + w->style.paddingy+0.5f, w->cwidth, w->cheight);
-	nvgStrokeWidth(state.vg, 1.0f);
-	nvgStrokeColor(state.vg, nvgRGBA(255,255,0,128));
-	nvgStroke(state.vg);
+	nvgBeginPath(context.vg);
+	nvgRect(context.vg, w->x + w->style.paddingx+0.5f, w->y + w->style.paddingy+0.5f, w->cwidth, w->cheight);
+	nvgStrokeWidth(context.vg, 1.0f);
+	nvgStrokeColor(context.vg, nvgRGBA(255,255,0,128));
+	nvgStroke(context.vg);
 }
 
 
@@ -1341,17 +1436,17 @@ static void drawIcon(struct MGwidget* w)
 	if (image == NULL) return;
 
 	if (override) {
-		nvgFillColor(state.vg, nvgCol(w->style.contentColor));
-		nvgStrokeColor(state.vg, nvgCol(w->style.contentColor));
+		nvgFillColor(context.vg, nvgCol(w->style.contentColor));
+		nvgStrokeColor(context.vg, nvgCol(w->style.contentColor));
 	}
 	sx = w->width / image->width;
 	sy = w->height / image->height;
 	s = minf(sx, sy);
 
-	nvgSave(state.vg);
-	nvgTranslate(state.vg, w->x + w->width/2, w->y + w->height/2);
-	nvgScale(state.vg, s, s);
-	nvgTranslate(state.vg, -image->width/2, -image->height/2);
+	nvgSave(context.vg);
+	nvgTranslate(context.vg, w->x + w->width/2, w->y + w->height/2);
+	nvgScale(context.vg, s, s);
+	nvgTranslate(context.vg, -image->width/2, -image->height/2);
 
 	for (shape = image->shapes; shape != NULL; shape = shape->next) {
 		struct NSVGpath* path;
@@ -1359,33 +1454,33 @@ static void drawIcon(struct MGwidget* w)
 		if (shape->fill.type == NSVG_PAINT_NONE && shape->stroke.type == NSVG_PAINT_NONE)
 			continue;
 
-		nvgBeginPath(state.vg);
+		nvgBeginPath(context.vg);
 		for (path = shape->paths; path != NULL; path = path->next) {
-			nvgMoveTo(state.vg, path->pts[0], path->pts[1]);
+			nvgMoveTo(context.vg, path->pts[0], path->pts[1]);
 			for (i = 1; i < path->npts; i += 3) {
 				float* p = &path->pts[i*2];
-				nvgBezierTo(state.vg, p[0],p[1], p[2],p[3], p[4],p[5]);
+				nvgBezierTo(context.vg, p[0],p[1], p[2],p[3], p[4],p[5]);
 			}
 			if (path->closed)
-				nvgLineTo(state.vg, path->pts[0], path->pts[1]);
+				nvgLineTo(context.vg, path->pts[0], path->pts[1]);
 		}
 
 		if (shape->fill.type == NSVG_PAINT_COLOR) {
 			if (!override)
-				nvgFillColor(state.vg, nvgCol(shape->fill.color));
-			nvgFill(state.vg);
+				nvgFillColor(context.vg, nvgCol(shape->fill.color));
+			nvgFill(context.vg);
 //			printf("image %s\n", w->icon.icon->name);
-//			nvgDebugDumpPathCache(state.vg);
+//			nvgDebugDumpPathCache(context.vg);
 		}
 		if (shape->stroke.type == NSVG_PAINT_COLOR) {
 			if (!override)
-				nvgStrokeColor(state.vg, nvgCol(shape->stroke.color));
-			nvgStrokeWidth(state.vg, shape->strokeWidth);
-			nvgStroke(state.vg);
+				nvgStrokeColor(context.vg, nvgCol(shape->stroke.color));
+			nvgStrokeWidth(context.vg, shape->strokeWidth);
+			nvgStroke(context.vg);
 		}
 	}
 
-	nvgRestore(state.vg);
+	nvgRestore(context.vg);
 }
 
 static void drawRect(struct MGwidget* w)
@@ -1397,42 +1492,42 @@ static void drawRect(struct MGwidget* w)
 	int height = w->height;
 
 	if (isStyleSet(&w->style, MG_FILLCOLOR_ARG)) {
-		nvgBeginPath(state.vg);
+		nvgBeginPath(context.vg);
 		if (isStyleSet(&w->style, MG_CORNERRADIUS_ARG)) {
-			nvgRoundedRect(state.vg, x, y, width, height, w->style.cornerRadius);
+			nvgRoundedRect(context.vg, x, y, width, height, w->style.cornerRadius);
 		} else {
-			nvgRect(state.vg, x, y, width, height);
+			nvgRect(context.vg, x, y, width, height);
 		}
-		nvgFillColor(state.vg, nvgCol(w->style.fillColor));
-		nvgFill(state.vg);
+		nvgFillColor(context.vg, nvgCol(w->style.fillColor));
+		nvgFill(context.vg);
 	}
 
 	if (isStyleSet(&w->style, MG_BORDERCOLOR_ARG)) {
 		float s = w->style.borderSize * 0.5f;
-		nvgBeginPath(state.vg);
+		nvgBeginPath(context.vg);
 		if (isStyleSet(&w->style, MG_CORNERRADIUS_ARG)) {
-			nvgRoundedRect(state.vg, x+s, y+s, width-s*2, height-s*2, w->style.cornerRadius - s);
+			nvgRoundedRect(context.vg, x+s, y+s, width-s*2, height-s*2, w->style.cornerRadius - s);
 		} else {
-			nvgRect(state.vg, x+s, y+s, width-s*2, height-s*2);
+			nvgRect(context.vg, x+s, y+s, width-s*2, height-s*2);
 		}
-		nvgStrokeWidth(state.vg, w->style.borderSize);
-		nvgStrokeColor(state.vg, nvgCol(w->style.borderColor));
-		nvgStroke(state.vg);
+		nvgStrokeWidth(context.vg, w->style.borderSize);
+		nvgStrokeColor(context.vg, nvgCol(w->style.borderColor));
+		nvgStroke(context.vg);
 	}
 }
 
 static int measureTextGlyphs(struct MGwidget* w, const char* text, struct NVGglyphPosition* pos, int maxpos)
 {
-	nvgFontSize(state.vg, w->style.fontSize);
+	nvgFontSize(context.vg, w->style.fontSize);
 	if (w->style.textAlign == MG_CENTER) {
-		nvgTextAlign(state.vg, NVG_ALIGN_CENTER|NVG_ALIGN_MIDDLE);
-		return nvgTextGlyphPositions(state.vg, w->x + w->width/2, w->y + w->height/2, text, NULL, pos, maxpos);
+		nvgTextAlign(context.vg, NVG_ALIGN_CENTER|NVG_ALIGN_MIDDLE);
+		return nvgTextGlyphPositions(context.vg, w->x + w->width/2, w->y + w->height/2, text, NULL, pos, maxpos);
 	} else if (w->style.textAlign == MG_END) {
-		nvgTextAlign(state.vg, NVG_ALIGN_RIGHT|NVG_ALIGN_MIDDLE);
-		return nvgTextGlyphPositions(state.vg, w->x + w->width - w->style.paddingx, w->y + w->height/2, text, NULL, pos, maxpos);
+		nvgTextAlign(context.vg, NVG_ALIGN_RIGHT|NVG_ALIGN_MIDDLE);
+		return nvgTextGlyphPositions(context.vg, w->x + w->width - w->style.paddingx, w->y + w->height/2, text, NULL, pos, maxpos);
 	} else {
-		nvgTextAlign(state.vg, NVG_ALIGN_LEFT|NVG_ALIGN_MIDDLE);
-		return nvgTextGlyphPositions(state.vg, w->x + w->style.paddingx, w->y + w->height/2, text, NULL, pos, maxpos);
+		nvgTextAlign(context.vg, NVG_ALIGN_LEFT|NVG_ALIGN_MIDDLE);
+		return nvgTextGlyphPositions(context.vg, w->x + w->style.paddingx, w->y + w->height/2, text, NULL, pos, maxpos);
 	}
 	return 0;
 }
@@ -1443,28 +1538,28 @@ static void drawText(struct MGwidget* w, const char* text)
 //	struct NVGglyphPosition pos[100];
 //	int npos = 0, i;
 
-	nvgFillColor(state.vg, nvgCol(w->style.contentColor));
-	nvgFontSize(state.vg, w->style.fontSize);
+	nvgFillColor(context.vg, nvgCol(w->style.contentColor));
+	nvgFontSize(context.vg, w->style.fontSize);
 	if (w->style.textAlign == MG_CENTER) {
-		nvgTextAlign(state.vg, NVG_ALIGN_CENTER|NVG_ALIGN_MIDDLE);
-//		npos = nvgTextGlyphPositions(state.vg, w->x + w->width/2, w->y + w->height/2, w->text, NULL, bounds, pos, 100);
-		nvgText(state.vg, w->x + w->width/2, w->y + w->height/2, text, NULL);
+		nvgTextAlign(context.vg, NVG_ALIGN_CENTER|NVG_ALIGN_MIDDLE);
+//		npos = nvgTextGlyphPositions(context.vg, w->x + w->width/2, w->y + w->height/2, w->text, NULL, bounds, pos, 100);
+		nvgText(context.vg, w->x + w->width/2, w->y + w->height/2, text, NULL);
 	} else if (w->style.textAlign == MG_END) {
-		nvgTextAlign(state.vg, NVG_ALIGN_RIGHT|NVG_ALIGN_MIDDLE);
-//		npos = nvgTextGlyphPositions(state.vg, w->x + w->width - w->style.paddingx, w->y + w->height/2, w->text, NULL, bounds, pos, 100);
-		nvgText(state.vg, w->x + w->width - w->style.paddingx, w->y + w->height/2, text, NULL);
+		nvgTextAlign(context.vg, NVG_ALIGN_RIGHT|NVG_ALIGN_MIDDLE);
+//		npos = nvgTextGlyphPositions(context.vg, w->x + w->width - w->style.paddingx, w->y + w->height/2, w->text, NULL, bounds, pos, 100);
+		nvgText(context.vg, w->x + w->width - w->style.paddingx, w->y + w->height/2, text, NULL);
 	} else {
-		nvgTextAlign(state.vg, NVG_ALIGN_LEFT|NVG_ALIGN_MIDDLE);
-//		npos = nvgTextGlyphPositions(state.vg, w->x + w->style.paddingx, w->y + w->height/2, w->text, NULL, bounds, pos, 100);
-		nvgText(state.vg, w->x + w->style.paddingx, w->y + w->height/2, text, NULL);
+		nvgTextAlign(context.vg, NVG_ALIGN_LEFT|NVG_ALIGN_MIDDLE);
+//		npos = nvgTextGlyphPositions(context.vg, w->x + w->style.paddingx, w->y + w->height/2, w->text, NULL, bounds, pos, 100);
+		nvgText(context.vg, w->x + w->style.paddingx, w->y + w->height/2, text, NULL);
 	}
 
-/*	nvgFillColor(state.vg, nvgRGBA(255,0,0,64));
+/*	nvgFillColor(context.vg, nvgRGBA(255,0,0,64));
 	for (i = 0; i < npos; i++) {
 		struct NVGglyphPosition* p = &pos[i];
-		nvgBeginPath(state.vg);
-		nvgRect(state.vg, p->x, bounds[1], p->width, bounds[3]-bounds[1]);
-		nvgFill(state.vg);
+		nvgBeginPath(context.vg);
+		nvgRect(context.vg, p->x, bounds[1], p->width, bounds[3]-bounds[1]);
+		nvgFill(context.vg);
 	}*/
 }
 
@@ -1474,16 +1569,16 @@ static void drawParagraph(struct MGwidget* w)
 	float y = w->y + w->style.paddingy;
 	float width = maxf(0.0f, w->width - w->style.paddingx*2);
 	if (width < 1.0f) return;
-	nvgFillColor(state.vg, nvgCol(w->style.contentColor));
-	nvgFontSize(state.vg, w->style.fontSize);
-	nvgTextLineHeight(state.vg, w->style.lineHeight > 0 ? w->style.lineHeight : 1);
+	nvgFillColor(context.vg, nvgCol(w->style.contentColor));
+	nvgFontSize(context.vg, w->style.fontSize);
+	nvgTextLineHeight(context.vg, w->style.lineHeight > 0 ? w->style.lineHeight : 1);
 	if (w->style.textAlign == MG_CENTER)
-		nvgTextAlign(state.vg, NVG_ALIGN_CENTER|NVG_ALIGN_TOP);
+		nvgTextAlign(context.vg, NVG_ALIGN_CENTER|NVG_ALIGN_TOP);
 	else if (w->style.textAlign == MG_END)
-		nvgTextAlign(state.vg, NVG_ALIGN_RIGHT|NVG_ALIGN_TOP);
+		nvgTextAlign(context.vg, NVG_ALIGN_RIGHT|NVG_ALIGN_TOP);
 	else
-		nvgTextAlign(state.vg, NVG_ALIGN_LEFT|NVG_ALIGN_TOP);
-	nvgTextBox(state.vg, x, y, width, w->text, NULL);
+		nvgTextAlign(context.vg, NVG_ALIGN_LEFT|NVG_ALIGN_TOP);
+	nvgTextBox(context.vg, x, y, width, w->text, NULL);
 }
 
 static void drawBox(struct MGwidget* box, const float* bounds)
@@ -1494,10 +1589,10 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 	float wbounds[4];
 	int debug = 0;
 
-	nvgFontFace(state.vg, "sans");
-	nvgFontSize(state.vg, TEXT_SIZE);
+	nvgFontFace(context.vg, "sans");
+	nvgFontSize(context.vg, TEXT_SIZE);
 
-	nvgScissor(state.vg, (int)bounds[0], (int)bounds[1], (int)bounds[2], (int)bounds[3]);
+	nvgScissor(context.vg, (int)bounds[0], (int)bounds[1], (int)bounds[2], (int)bounds[3]);
 
 	drawRect(box);
 
@@ -1524,7 +1619,7 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 			if (!visible(bbounds, w->x, w->y, w->width, w->height))
 				continue;
 
-			nvgScissor(state.vg, (int)bbounds[0], (int)bbounds[1], (int)bbounds[2], (int)bbounds[3]);
+			nvgScissor(context.vg, (int)bbounds[0], (int)bbounds[1], (int)bbounds[2], (int)bbounds[3]);
 
 			switch (w->type) {
 			case MG_BOX:
@@ -1536,7 +1631,7 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 				if (debug) drawDebugRect(w);
 				isectBounds(wbounds, bbounds, w->x, w->y, w->width, w->height);
 				if (wbounds[2] > 0.0f && wbounds[3] > 0.0f) {
-					nvgScissor(state.vg, (int)wbounds[0], (int)wbounds[1], (int)wbounds[2], (int)wbounds[3]);
+					nvgScissor(context.vg, (int)wbounds[0], (int)wbounds[1], (int)wbounds[2], (int)wbounds[3]);
 					drawText(w, w->text);
 				}
 				break;
@@ -1546,7 +1641,7 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 				if (debug) drawDebugRect(w);
 				isectBounds(wbounds, bbounds, w->x, w->y, w->width, w->height);
 				if (wbounds[2] > 0.0f && wbounds[3] > 0.0f) {
-					nvgScissor(state.vg, (int)wbounds[0], (int)wbounds[1], (int)wbounds[2], (int)wbounds[3]);
+					nvgScissor(context.vg, (int)wbounds[0], (int)wbounds[1], (int)wbounds[2], (int)wbounds[3]);
 					drawParagraph(w);
 				}
 				break;
@@ -1562,20 +1657,20 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 				if (debug) drawDebugRect(w);
 				isectBounds(wbounds, bbounds, w->x, w->y, w->width, w->height);
 				if (wbounds[2] > 0.0f && wbounds[3] > 0.0f) {
-					nvgScissor(state.vg, (int)wbounds[0], (int)wbounds[1], (int)wbounds[2], (int)wbounds[3]);
+					nvgScissor(context.vg, (int)wbounds[0], (int)wbounds[1], (int)wbounds[2], (int)wbounds[3]);
 					drawText(w);
 					if (w->uptr != NULL) {
-						struct MGinputState* input = allocTransientInput(w, 0);
+						struct MGinputState* input = allocStateInput(w, 0);
 						int j;
 						if (input != NULL && input->maxText > 0) {
 							input->npos = measureTextGlyphs(w, input->pos, input->maxText);
 //							printf("input  max=%d i='%s' w='%s' pos=%p npos=%d\n", input->maxText, input->buf, w->text, input->pos, input->npos);
-							nvgFillColor(state.vg, nvgRGBA(255,0,0,64));
+							nvgFillColor(context.vg, nvgRGBA(255,0,0,64));
 							for (j = 0; j < input->npos; j++) {
 								struct NVGglyphPosition* p = &input->pos[j];
-								nvgBeginPath(state.vg);
-								nvgRect(state.vg, p->x, w->y, p->width, w->height);
-								nvgFill(state.vg);
+								nvgBeginPath(context.vg);
+								nvgRect(context.vg, p->x, w->y, p->width, w->height);
+								nvgFill(context.vg);
 							}
 						}
 					}
@@ -1583,7 +1678,7 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 
 				isectBounds(wbounds, bbounds, w->x, w->y, w->width, w->height);
 				if (w->render != NULL && wbounds[2] > 0.0f && wbounds[3] > 0.0f) {
-					w->render(w->uptr, w, state.vg, wbounds);
+					w->render(w->uptr, w, context.vg, wbounds);
 				}
 				if (debug) drawDebugRect(w);
 				break;
@@ -1591,7 +1686,7 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 			case MG_CANVAS:
 				isectBounds(wbounds, bbounds, w->x, w->y, w->width, w->height);
 				if (w->render != NULL && wbounds[2] > 0.0f && wbounds[3] > 0.0f) {
-					w->render(w->uptr, w, state.vg, wbounds);
+					w->render(w->uptr, w, context.vg, wbounds);
 				}
 				if (debug) drawDebugRect(w);
 				break;
@@ -1600,7 +1695,7 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 	}
 
 	if (box->style.overflow == MG_SCROLL) {
-		nvgScissor(state.vg, bbounds[0], bbounds[1], bbounds[2], bbounds[3]);
+		nvgScissor(context.vg, bbounds[0], bbounds[1], bbounds[2], bbounds[3]);
 		if (box->dir == MG_ROW) {
 			float contentSize = box->cwidth;
 			float containerSize = box->width;
@@ -1611,14 +1706,14 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 				float h = SCROLL_SIZE;
 				float x2 = x;
 				float w2 = (containerSize / contentSize) * w;
-				nvgBeginPath(state.vg);
-				nvgRect(state.vg, x, y, w, h);
-				nvgFillColor(state.vg, nvgRGBA(0,0,0,64));
-				nvgFill(state.vg);
-				nvgBeginPath(state.vg);
-				nvgRect(state.vg, x2, y, w2, h);
-				nvgFillColor(state.vg, nvgRGBA(0,0,0,255));
-				nvgFill(state.vg);
+				nvgBeginPath(context.vg);
+				nvgRect(context.vg, x, y, w, h);
+				nvgFillColor(context.vg, nvgRGBA(0,0,0,64));
+				nvgFill(context.vg);
+				nvgBeginPath(context.vg);
+				nvgRect(context.vg, x2, y, w2, h);
+				nvgFillColor(context.vg, nvgRGBA(0,0,0,255));
+				nvgFill(context.vg);
 			}
 		} else {
 			float contentSize = box->cheight;
@@ -1630,14 +1725,14 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 				float h = maxf(0, box->height - SCROLL_PAD*2);
 				float y2 = y;
 				float h2 = (containerSize / contentSize) * h;
-				nvgBeginPath(state.vg);
-				nvgRect(state.vg, x, y, w, h);
-				nvgFillColor(state.vg, nvgRGBA(0,0,0,64));
-				nvgFill(state.vg);
-				nvgBeginPath(state.vg);
-				nvgRect(state.vg, x, y2, w, h2);
-				nvgFillColor(state.vg, nvgRGBA(0,0,0,255));
-				nvgFill(state.vg);
+				nvgBeginPath(context.vg);
+				nvgRect(context.vg, x, y, w, h);
+				nvgFillColor(context.vg, nvgRGBA(0,0,0,64));
+				nvgFill(context.vg);
+				nvgBeginPath(context.vg);
+				nvgRect(context.vg, x, y2, w, h2);
+				nvgFillColor(context.vg, nvgRGBA(0,0,0,255));
+				nvgFill(context.vg);
 			}
 		}
 	}
@@ -1646,10 +1741,10 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 static void drawPanels(const float* bounds)
 {
 	int i;
-	if (state.vg == NULL) return;	
-	for (i = 0; i < state.panelCount; i++) {
-		if (state.panels[i]->active)
-			drawBox(state.panels[i], bounds);
+	if (context.vg == NULL) return;	
+	for (i = 0; i < context.panelCount; i++) {
+		if (context.panels[i]->active)
+			drawBox(context.panels[i], bounds);
 	}
 }
 
@@ -1667,9 +1762,9 @@ static void offsetWidget(struct MGwidget* w, float dx, float dy)
 static void offsetPopups()
 {	
 	int i;
-	if (state.vg == NULL) return;	
-	for (i = 0; i < state.panelCount; i++) {
-		struct MGwidget* w = state.panels[i];
+	if (context.vg == NULL) return;	
+	for (i = 0; i < context.panelCount; i++) {
+		struct MGwidget* w = context.panels[i];
 		if (!w->active) continue;
 		if (w->parent) {
 			float dx = w->parent->x;
@@ -1682,28 +1777,31 @@ static void offsetPopups()
 
 void mgFrameEnd()
 {
-	float bounds[4] = {0, 0, state.width, state.height};
+	float bounds[4] = {0, 0, context.width, context.height};
 
 	offsetPopups();
+
+	outputResPoolSize = 0;
+	outputTempPoolSize = 0;
 
 	updateLogic(bounds);
 	drawPanels(bounds);
 
-	// clean up transients
-	cleanUpTransients();
+	// cleanup unused states
+	garbageCollectStates();
 }
 
 static void textSize(const char* str, float size, float* w, float* h)
 {
 	float tw, th;
-	if (state.vg == NULL) {
+	if (context.vg == NULL) {
 		*w = *h = 0;
 		return;
 	}
-	nvgFontFace(state.vg, "sans");
-	nvgFontSize(state.vg, size);
-	tw = str != NULL ? nvgTextBounds(state.vg, 0,0, str, NULL, NULL) : 0;
-	nvgTextMetrics(state.vg, NULL, NULL, &th);
+	nvgFontFace(context.vg, "sans");
+	nvgFontSize(context.vg, size);
+	tw = str != NULL ? nvgTextBounds(context.vg, 0,0, str, NULL, NULL) : 0;
+	nvgTextMetrics(context.vg, NULL, NULL, &th);
 	if (w) *w = tw;
 	if (h) *h = th;
 }
@@ -1712,14 +1810,14 @@ static void textSize(const char* str, float size, float* w, float* h)
 static void paragraphSize(const char* str, float size, float lineh, float maxw, float* w, float* h)
 {
 	float bounds[4];
-	if (state.vg == NULL) {
+	if (context.vg == NULL) {
 		*w = *h = 0;
 		return;
 	}
-	nvgFontFace(state.vg, "sans");
-	nvgFontSize(state.vg, size);
-	nvgTextLineHeight(state.vg, lineh > 0 ? lineh : 1);
-	nvgTextBoxBounds(state.vg, 0,0, maxw, str, NULL, bounds);
+	nvgFontFace(context.vg, "sans");
+	nvgFontSize(context.vg, size);
+	nvgTextLineHeight(context.vg, lineh > 0 ? lineh : 1);
+	nvgTextBoxBounds(context.vg, 0,0, maxw, str, NULL, bounds);
 	*w = bounds[2] - bounds[0];
 	*h = bounds[3] - bounds[1];
 }
@@ -2267,17 +2365,17 @@ unsigned int mgCreateStyle(const char* selector, struct MGopt* normal, struct MG
 static struct MGhit* hitResult(struct MGwidget* w)
 {
 	if (w == NULL) return NULL;
-	if (w->style.logic == MG_CLICK && state.clicked == w->id)
-		return &state.result;
-	if (w->style.logic == MG_DRAG && (state.pressed == w->id || state.dragged == w->id || state.released == w->id))
-		return &state.result;
+	if (w->style.logic == MG_CLICK && context.clicked == w->id)
+		return &context.result;
+	if (w->style.logic == MG_DRAG && (context.pressed == w->id || context.dragged == w->id || context.released == w->id))
+		return &context.result;
 	return NULL;
 }
 
 static struct MGhit* hitResult2(unsigned int id)
 {
-	if (state.clicked == id || state.pressed == id || state.dragged == id || state.released == id)
-		return &state.result;
+	if (context.clicked == id || context.pressed == id || context.dragged == id || context.released == id)
+		return &context.result;
 	return NULL;
 }
 
@@ -2287,18 +2385,18 @@ static unsigned char getState(struct MGwidget* w)
 	if (w == NULL) return ret;
 	if (w->parent != NULL && w->bubble)
 		ret = getState(w->parent);
-	if (state.active == w->id) ret |= MG_ACTIVE;
-	if (state.hover == w->id) ret |= MG_HOVER;
-	if (state.focus == w->id) ret |= MG_FOCUS;
+	if (context.active == w->id) ret |= MG_ACTIVE;
+	if (context.hover == w->id) ret |= MG_HOVER;
+	if (context.focus == w->id) ret |= MG_FOCUS;
 	return ret;
 }
 
 static unsigned char getState2(unsigned int id)
 {
 	unsigned char ret = MG_NORMAL;
-	if (state.active == id) ret |= MG_ACTIVE;
-	if (state.hover == id) ret |= MG_HOVER;
-	if (state.focus == id) ret |= MG_FOCUS;
+	if (context.active == id) ret |= MG_ACTIVE;
+	if (context.hover == id) ret |= MG_HOVER;
+	if (context.focus == id) ret |= MG_FOCUS;
 	return ret;
 }
 
@@ -2306,9 +2404,9 @@ static unsigned char getChildState(struct MGwidget* w)
 {
 	unsigned char ret = MG_NORMAL;
 	if (w == NULL) return ret;
-	if (state.active == w->id) ret |= MG_ACTIVE;
-	if (state.hover == w->id) ret |= MG_HOVER;
-	if (state.focus == w->id) ret |= MG_FOCUS;
+	if (context.active == w->id) ret |= MG_ACTIVE;
+	if (context.hover == w->id) ret |= MG_HOVER;
+	if (context.focus == w->id) ret |= MG_FOCUS;
 	if (w->type == MG_BOX) {
 		struct MGwidget* c;
 		for (c = w->box.children; c != NULL; c = c->next)
@@ -2439,9 +2537,9 @@ static struct MGstyle getStyle(unsigned char wstate, struct MGopt* opts, const c
 	const char* tag = getTag(opts);
 
 	// Find current path to be used with selector.
-	for (i = 0; i < state.tagCount; i++) {
-		if (state.tags[i] != NULL)
-			path[npath++] = (char*)state.tags[i];
+	for (i = 0; i < context.tagCount; i++) {
+		if (context.tags[i] != NULL)
+			path[npath++] = (char*)context.tags[i];
 	}
 	if (tag != NULL)
 		path[npath++] = tag;
@@ -2474,9 +2572,9 @@ static struct MGstyle computeStyle(unsigned char wstate, struct MGopt* opts, con
 	memset(&style, 0, sizeof(style));
 
 	// Find current path to be used with selector.
-	for (i = 0; i < state.tagCount; i++) {
-		if (state.tags[i] != NULL)
-			path[npath++] = (char*)state.tags[i];
+	for (i = 0; i < context.tagCount; i++) {
+		if (context.tags[i] != NULL)
+			path[npath++] = (char*)context.tags[i];
 	}
 	if (tag != NULL)
 		path[npath++] = tag;
@@ -2502,7 +2600,7 @@ unsigned int mgPanelBegin(int dir, float x, float y, int zidx, struct MGopt* opt
 {
 	struct MGwidget* w = NULL;
 
-	pushId(state.panelCount+1);
+	pushId(context.panelCount+1);
 
 	opts = mgOpts(mgTag("panel"), opts);
 
@@ -2688,9 +2786,13 @@ static void innerBounds(struct MGwidget* w, struct MGrect* b)
 
 static void sliderDraw(void* uptr, struct MGwidget* w, struct NVGcontext* vg, const float* view)
 {
-	struct MGsliderState* input = (struct MGsliderState*)findTransient(w->id, 0, sizeof(struct MGsliderState));
-	float x, hr;
-	if (input == NULL) return;
+	struct MGsliderState* inval = (struct MGsliderState*)uptr;
+	struct MGsliderState* state = (struct MGsliderState*)findState(w->id, 0, sizeof(struct MGsliderState));
+	float v, x, hr;
+	if (inval == NULL) return;
+
+	if (state != NULL)
+		inval = state;
 
 	hr = maxf(2.0f, w->height - w->style.paddingy*2) / 2.0f;
 
@@ -2703,7 +2805,7 @@ static void sliderDraw(void* uptr, struct MGwidget* w, struct NVGcontext* vg, co
 	nvgStroke(vg);
 
 	// Handle position
-	x = w->x + hr + (input->value - input->vmin) / (input->vmax - input->vmin) * (w->width - hr*2);
+	x = w->x + hr + (inval->value - inval->vmin) / (inval->vmax - inval->vmin) * (w->width - hr*2);
 
 	// Bar
 	if (isStyleSet(&w->style, MG_CONTENTCOLOR_ARG)) {
@@ -2734,11 +2836,11 @@ static void sliderDraw(void* uptr, struct MGwidget* w, struct NVGcontext* vg, co
 
 static void sliderLogic(void* uptr, struct MGwidget* w, int event, struct MGhit* hit)
 {
-	struct MGsliderState* input = (struct MGsliderState*)findTransient(w->id, 0, sizeof(struct MGsliderState));
-	struct MGsliderState* output = (struct MGsliderState*)hit->storage;
+	struct MGsliderState* inval = (struct MGsliderState*)w->uptr;
+	struct MGsliderState* state = NULL;
 	float hr, xmin, xmax, xrange;
 
-	if (input == NULL) return;
+	if (inval == NULL) return;
 
 	hr = maxf(2.0f, w->height - w->style.paddingy*2) / 2.0f;
 
@@ -2746,107 +2848,66 @@ static void sliderLogic(void* uptr, struct MGwidget* w, int event, struct MGhit*
 	xmax = w->x + w->width - hr;
 	xrange = maxf(1.0f, xmax - xmin);
 
-	if (hit->pressed) {
-		float u = (input->value - input->vmin) / (input->vmax - input->vmin);
+	if (event == MG_PRESSED) {
+		state = (struct MGsliderState*)allocState(w->id, 0, sizeof(struct MGsliderState));
+		if (state == NULL) return;
+		*state = *inval;
+		float u = (state->value - state->vmin) / (state->vmax - state->vmin);
 		float x = xmin + u * (xmax - xmin);
 		if (hit->mx < (x-hr) || hit->mx > (x+hr)) {
 			// If hit outside the handle, skip there directly.
 			float v = clampf((hit->mx - xmin) / xrange, 0.0f, 1.0f);
-			input->value = clampf(input->vmin + v * (input->vmax - input->vmin), input->vmin, input->vmax);
+			state->value = clampf(state->vmin + v * (state->vmax - state->vmin), state->vmin, state->vmax);
 		}
-		output->value = input->value;
-		output->vstart = input->value;
+		state->vstart = state->value;
 	}
-	if (hit->dragged) {
-		float delta = (hit->deltamx / xrange) * (input->vmax - input->vmin);
-		input->value = clampf(output->vstart + delta, input->vmin, input->vmax);
-		output->value = input->value;
+	if (event == MG_DRAGGED) {
+		state = (struct MGsliderState*)findState(w->id, 0, sizeof(struct MGsliderState));
+		if (state == NULL) return;
+		float delta = (hit->deltamx / xrange) * (state->vmax - state->vmin);
+		state->value = clampf(state->vstart + delta, state->vmin, state->vmax);
+		mgSetResultFloat(w->id, state->value);
 	}
-
+	if (event == MG_RELEASED) {
+		freeState(w->id, 0);
+	}
 }
 
 
 unsigned int mgSlider(float* value, float vmin, float vmax, struct MGopt* opts)
 {
-	struct MGhit* res = NULL;
-	//struct MGstyle comp;
-	struct MGsliderState* input = NULL;
+	struct MGsliderState* inval = NULL;
+	float* res = NULL;
 	unsigned int canvas;
 
-/*
-	mgCreateStyle("slider.slot", mgOpts(
-		mgHeight(2), //SLIDER_HANDLE),
-		mgFillColor(0,0,0,128)
-//		mgPaddingX(SLIDER_HANDLE/2),
-//		mgCornerRadius(3)
-	), mgOpts(), mgOpts(), mgOpts());
-
-	mgCreateStyle("slider.bar",
-		// Normal
-		mgOpts(
-			mgPaddingX(SLIDER_HANDLE/2),
-			mgHeight(2), //SLIDER_HANDLE),
-			mgOverflow(MG_VISIBLE),
-			mgFillColor(220,220,220,255)
-		),
-		// Hover
-		mgOpts(
-			mgFillColor(255,255,255,255)
-		),
-		// Active
-		mgOpts(
-			mgFillColor(255,255,255,255)
-		),
-		// Focus
-		mgOpts(
-		)
-	);
-
-	mgCreateStyle("slider.handle",
-		// Normal
-		mgOpts(
-			mgWidth(SLIDER_HANDLE),
-			mgHeight(SLIDER_HANDLE),
-			mgFillColor(255,255,255,255),
-			mgBorderColor(255,255,255,0),
-			mgBorderSize(2),
-			mgCornerRadius(SLIDER_HANDLE/2)
-		),
-		// Hover
-		mgOpts(
-//			mgFillColor(220,220,220,255)
-		),
-		// Active
-		mgOpts(
-			mgBorderColor(255,255,255,255),
-			mgFillColor(32,32,32,255)
-		),
-		// Focus
-		mgOpts(
-			mgBorderColor(0,192,255,128)
-		)
-	);
-*/
 	opts = mgOpts(mgLogic(MG_DRAG), mgTag("slider-canvas"), opts);
-	canvas = mgCanvas(DEFAULT_SLIDERW, SLIDER_HANDLE, sliderLogic, sliderDraw, NULL, opts);
 
-	input = (struct MGsliderState*)allocTransient(canvas, 0, sizeof(struct MGsliderState));
+	inval = (struct MGsliderState*)allocInputTemp(sizeof(struct MGsliderState));
+	if (inval != NULL) {
+		inval->value = *value;
+		inval->vmin = vmin;
+		inval->vmax = vmax;
+	}
+	canvas = mgCanvas(DEFAULT_SLIDERW, SLIDER_HANDLE, sliderLogic, sliderDraw, inval, opts);
+
+	res = mgGetResultFloat(canvas);
+	if (res != NULL) {
+		*value = *res;
+	}
+
+/*	input = (struct MGsliderState*)allocState(canvas, 0, sizeof(struct MGsliderState));
 	if (input != NULL) {
 		unsigned char s = getState2(canvas);
 		input->value = *value;
 		input->vmin = vmin;
 		input->vmax = vmax;
-
-/*		input->slotStyle = getStyle(s, opts, "slot");
-		input->barStyle = getStyle(s, opts, "bar");
-		input->handleStyle = getStyle(s, opts, "handle");*/
 	}
 
 	res = hitResult2(canvas);
 	if (res != NULL) {
 		struct MGsliderState* output = (struct MGsliderState*)res->storage;
 		*value = output->value;
-	}
+	}*/
 
 	return canvas;
 }
@@ -2882,7 +2943,7 @@ unsigned int mgSlider2(float* value, float vmin, float vmax, struct MGopt* opts)
 
 	// TODO: reconsider pbounds.
 
-	if (hres != NULL) {
+/*	if (hres != NULL) {
 		struct MGsliderState* state = (struct MGsliderState*)hres->storage;
 		float xmin = hres->pbounds[0] + hstyle.width/2;
 		float xmax = hres->pbounds[0] + hres->pbounds[2] - hstyle.width/2;
@@ -2910,7 +2971,7 @@ unsigned int mgSlider2(float* value, float vmin, float vmax, struct MGopt* opts)
 			float delta = (res->deltamx / xrange) * (vmax - vmin);
 			*value = clampf(state->value + delta, vmin, vmax);
 		}
-	}
+	}*/
 
 	return slider;
 }
@@ -2941,7 +3002,7 @@ unsigned int mgScrollBar(float* offset, float contentSize, float viewSize, struc
 	res = hitResult2(scroll);
 	hres = hitResult2(handle);
 
-	if (hres != NULL) {
+/*	if (hres != NULL) {
 		// Drag slider to scroll
 		struct MGsliderState* state = (struct MGsliderState*)hres->storage;
 		float xmin = hres->pbounds[0];
@@ -2976,13 +3037,13 @@ unsigned int mgScrollBar(float* offset, float contentSize, float viewSize, struc
 			if (!res->pressed)
 				state->value = delay-delay2;
 		}
-	}
+	}*/
 
 	return scroll;
 }
 
 
-struct MGinputState {
+struct MGtextInputState {
 	int maxText;
 	int caretPos;
 	int npos;
@@ -2991,33 +3052,33 @@ struct MGinputState {
 	char* text;
 };
 
-static struct MGinputState* allocTransientInput(struct MGwidget* w, int maxText)
+static struct MGtextInputState* allocStateInput(struct MGwidget* w, int maxText)
 {
-	struct MGinputState* input = (struct MGinputState*)allocTransient(w->id, 0, sizeof(struct MGinputState));
+	struct MGtextInputState* input = (struct MGtextInputState*)allocState(w->id, 0, sizeof(struct MGtextInputState));
 	if (input == NULL) return NULL;
-	input->pos = (struct NVGglyphPosition*)allocTransient(w->id, 1, sizeof(struct NVGglyphPosition)*maxText);
+	input->pos = (struct NVGglyphPosition*)allocState(w->id, 1, sizeof(struct NVGglyphPosition)*maxText);
 	if (input->pos == NULL) return NULL;
-	input->text = (char*)allocTransient(w->id, 2, maxText);
+	input->text = (char*)allocState(w->id, 2, maxText);
 	if (input->text == NULL) return NULL;
 	return input;
 }
 
-static struct MGinputState* findTransientInput(struct MGwidget* w)
+static struct MGtextInputState* findStateInput(struct MGwidget* w)
 {
-	struct MGinputState* input = (struct MGinputState*)findTransient(w->id, 0, sizeof(struct MGinputState));
+	struct MGtextInputState* input = (struct MGtextInputState*)findState(w->id, 0, sizeof(struct MGtextInputState));
 	if (input == NULL) return NULL;
-	input->pos = (struct NVGglyphPosition*)findTransient(w->id, 1, sizeof(struct NVGglyphPosition)*input->maxText);
+	input->pos = (struct NVGglyphPosition*)findState(w->id, 1, sizeof(struct NVGglyphPosition)*input->maxText);
 	if (input->pos == NULL) return NULL;
-	input->text = (char*)findTransient(w->id, 2, input->maxText);
+	input->text = (char*)findState(w->id, 2, input->maxText);
 	if (input->text == NULL) return NULL;
 	return input;
 }
 
-static void freeTransientInput(struct MGwidget* w)
+static void freeStateInput(struct MGwidget* w)
 {
-	freeTransient(w->id, 0);
-	freeTransient(w->id, 1);
-	freeTransient(w->id, 2);
+	freeState(w->id, 0);
+	freeState(w->id, 1);
+	freeState(w->id, 2);
 }
 
 struct MGinputState2
@@ -3028,43 +3089,45 @@ struct MGinputState2
 
 static void inputDraw(void* uptr, struct MGwidget* w, struct NVGcontext* vg, const float* view)
 {
-	struct MGinputState2* state = (struct MGinputState2*)uptr;
-	struct MGinputState* input = NULL;
+	struct MGinputState2* inval = (struct MGinputState2*)uptr;
+	struct MGtextInputState* state = NULL;
 	char* text;
 	int j;
 
 	drawRect(w);
 //	if (debug) drawDebugRect(w);
 
-	if (state == NULL) return;
-	if (state->text == NULL) return;
+	if (inval == NULL) return;
 
 	nvgScissor(vg, (int)view[0], (int)view[1], (int)view[2], (int)view[3]);
-	drawText(w, state->text);
 
-	input = findTransientInput(w);
-
-	if (input != NULL && input->maxText > 0) {
+	state = findStateInput(w);
+	if (state != NULL) {
+		if (state->text != NULL)
+			drawText(w, state->text);
 //							printf("input  max=%d i='%s' w='%s' pos=%p npos=%d\n", input->maxText, input->buf, w->text, input->pos, input->npos);
 		nvgFillColor(vg, nvgRGBA(255,0,0,64));
-		for (j = 0; j < input->npos; j++) {
-			struct NVGglyphPosition* p = &input->pos[j];
+		for (j = 0; j < state->npos; j++) {
+			struct NVGglyphPosition* p = &state->pos[j];
 			nvgBeginPath(vg);
 			nvgRect(vg, p->minx, w->y, p->maxx - p->minx, w->height);
 			nvgFill(vg);
 		}
 
-		if (input->pos != NULL) {
+		if (state->pos != NULL) {
 			float caretx = 0;
-			if (input->caretPos >= input->npos)
-				caretx = input->pos[input->npos-1].maxx;
+			if (state->caretPos >= state->npos)
+				caretx = state->pos[state->npos-1].maxx;
 			else
-				caretx = input->pos[input->caretPos].x;
+				caretx = state->pos[state->caretPos].x;
 			nvgFillColor(vg, nvgRGBA(255,0,0,255));
 			nvgBeginPath(vg);
 			nvgRect(vg, (int)(caretx-0.5f), w->y, 1, w->height);
 			nvgFill(vg);
 		}
+	} else {
+		if (inval->text != NULL)
+			drawText(w, inval->text);
 	}
 }
 
@@ -3089,34 +3152,75 @@ static int findCaretPos(float x, struct NVGglyphPosition* glyphs, int nglyphs)
 	return caret;
 }
 
+static void insertText(char* dst, int ndst, int idx, char* str, int nstr)
+{
+	int i, count;
+	if (idx < 0 || idx >= ndst) return;
+	dst += idx;
+	count = mini(idx+nstr, ndst-1) - idx;
+	for (i = 0; i < count; i++)
+		*dst++ = *str++;
+	*dst++ = '\0';
+}
+
+
 static void inputLogic(void* uptr, struct MGwidget* w, int event, struct MGhit* hit)
 {
-	struct MGinputState2* state = (struct MGinputState2*)uptr;
-	struct MGinputState* input = NULL;
-	if (state == NULL || state->text == NULL) return;
+	struct MGinputState2* inval = (struct MGinputState2*)uptr;
+	struct MGtextInputState* state = NULL;
+
+	if (inval == NULL) return;
+
+	state = findStateInput(w);
 
 	if (event == MG_FOCUSED) {
-		input = (struct MGinputState*)allocTransientInput(w, state->maxText);
-		if (input == NULL) return;
-		memcpy(input->text, state->text, state->maxText);
-		input->maxText = state->maxText;
-		input->npos = measureTextGlyphs(w, input->text, input->pos, input->maxText);
-		input->caretPos = 0;
+		state = (struct MGtextInputState*)allocStateInput(w, inval->maxText);
+		if (state == NULL) return;
+		if (inval->text != NULL)
+			memcpy(state->text, inval->text, inval->maxText);
+		else
+			memset(state->text, 0, inval->maxText);
+		state->maxText = inval->maxText;
+		state->npos = measureTextGlyphs(w, state->text, state->pos, state->maxText);
+		state->caretPos = 0;
 		printf("%d focused\n", w->id);
 	}
 	if (event == MG_BLURRED) {
-		freeTransientInput(w);
+		freeStateInput(w);
+		state = NULL;
 		printf("%d blurred\n", w->id);
 	}
 	if (event == MG_PRESSED) {
-		input = findTransientInput(w);
-		if (input == NULL) return;
-		input->caretPos = findCaretPos(hit->mx, input->pos, input->npos);
+		if (state == NULL) return;
+		state->caretPos = findCaretPos(hit->mx, state->pos, state->npos);
 	}
 	if (event == MG_DRAGGED) {
-		input = findTransientInput(w);
-		if (input == NULL) return;
-		input->caretPos = findCaretPos(hit->mx, input->pos, input->npos);
+		if (state == NULL) return;
+		state->caretPos = findCaretPos(hit->mx, state->pos, state->npos);
+	}
+	if (event == MG_KEYPRESSED) {
+		printf("%d pressed: %d\n", w->id, hit->code);
+	}
+	if (event == MG_KEYRELEASED) {
+		printf("%d released: %d\n", w->id, hit->code);
+	}
+	if (event == MG_CHARTYPED) {
+		char str[8];
+		struct MGinputState2* outval;
+		if (state == NULL) return;
+		// Append
+		cpToUTF8(hit->code, str);
+		insertText(state->text, state->maxText, strlen(state->text), str, strlen(str));
+		// Store result
+		outval = (struct MGinputState2*)allocOutputTemp(sizeof(struct MGinputState2));
+		if (outval != NULL) {
+			outval->text = (char*)allocOutputTemp(state->maxText);
+			if (outval->text != NULL) {
+				outval->maxText = state->maxText;
+				memcpy(outval->text, state->text, state->maxText);
+				mgSetResultPtr(w->id, outval);
+			}
+		}
 	}
 
 /*	switch (event) {
@@ -3135,6 +3239,7 @@ unsigned int mgInput(char* text, int maxText, struct MGopt* opts)
 {
 //	struct MGhit* res = NULL;
 	float th;
+	struct MGinputState2* res = NULL;
 	struct MGinputState2* state = NULL;
 	struct MGwidget* parent = getParent();
 	struct MGwidget* w = allocWidget(MG_INPUT);
@@ -3151,21 +3256,26 @@ unsigned int mgInput(char* text, int maxText, struct MGopt* opts)
 	w->render = inputDraw;
 	w->logic = inputLogic;
 
-	state = (struct MGinputState2*)allocFrameTemp(sizeof(struct MGinputState2));
+	state = (struct MGinputState2*)allocInputTemp(sizeof(struct MGinputState2));
 	if (state != NULL) {
 		memset(state, 0, sizeof(struct MGinputState2));
-		state->text = (char*)allocFrameTemp(maxText);
+		state->text = (char*)allocInputTemp(maxText);
 		if (state->text != NULL) {
 			state->maxText = maxText;
 			memcpy(state->text, text, maxText);
 		}
 	}
-
 	w->uptr = state;
+
+	res = mgGetResultPtr(w->id);
+	if (res != NULL) {
+		printf("res='%s'\n", res->text);
+		memcpy(text, res->text, mini(maxText, res->maxText));
+	}
 
 /*	res = hitResult(w);
 	if (getState(w) & MG_FOCUS) {
-		struct MGinputState* input = allocTransientInput(w, maxi(20, maxText));
+		struct MGinputState* input = allocStateInput(w, maxi(20, maxText));
 		if (input == NULL) return res;
 
 		if (input->maxText == 0) {
@@ -3297,12 +3407,12 @@ unsigned int mgPopupBegin(unsigned int target, int trigger, int dir, struct MGop
 
 	if (tgt == NULL) return 0;
 
-	pushId(state.panelCount+1);
+	pushId(context.panelCount+1);
 
 	w = allocWidget(MG_BOX);
 	w->parent = tgt;
 
-	popup = (struct MGpopupState*)allocTransient(w->id, 0, sizeof(struct MGpopupState));
+	popup = (struct MGpopupState*)allocState(w->id, 0, sizeof(struct MGpopupState));
 	if (popup != NULL) {
 //		if (hit != NULL) {
 //			if (hit->clicked) {
@@ -3329,13 +3439,13 @@ unsigned int mgPopupBegin(unsigned int target, int trigger, int dir, struct MGop
 
 		if (popup->show) {
 			if (trigger == MG_HOVER) {
-				if (state.released) {
+				if (context.released) {
 					popup->counter = 0;
 				}
 			}
 			if (trigger == MG_ACTIVE) {
 				// close on second release, the first will come from the activation
-				if (state.released) {
+				if (context.released) {
 					popup->counter--;
 				}
 			}
@@ -3381,7 +3491,7 @@ unsigned int mgPopupEnd()
 	popTag();
 	w = popBox();
 	if (w != NULL) {
-		struct MGpopupState* popup = (struct MGpopupState*)allocTransient(w->id, 0, sizeof(struct MGpopupState));
+		struct MGpopupState* popup = (struct MGpopupState*)allocState(w->id, 0, sizeof(struct MGpopupState));
 		if (popup != NULL) {
 			if (popup->show) {
 				if (popup->trigger == MG_HOVER) {
@@ -3400,25 +3510,25 @@ unsigned int mgPopupEnd()
 
 int mgClicked(unsigned int id)
 {
-	return state.clicked == id ? 1 : 0;
+	return context.clicked == id ? 1 : 0;
 }
 
 int mgPressed(unsigned int id)
 {
-	return state.pressed == id ? 1 : 0;
+	return context.pressed == id ? 1 : 0;
 }
 
 int mgReleased(unsigned int id)
 {
-	return state.released == id ? 1 : 0;
+	return context.released == id ? 1 : 0;
 }
 
 int mgActive(unsigned int id)
 {
-	return state.active == id ? 1 : 0;
+	return context.active == id ? 1 : 0;
 }
 
 int mgHover(unsigned int id)
 {
-	return state.hover == id ? 1 : 0;
+	return context.hover == id ? 1 : 0;
 }

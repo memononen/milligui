@@ -27,34 +27,134 @@
 #include "nanovg_gl.h"
 #include "mgui.h"
 
-int mbut = 0;
+struct MGinputState input = { 0 };
 
 void errorcb(int error, const char* desc)
 {
 	printf("GLFW error %d: %s\n", error, desc);
 }
 
-static void key(GLFWwindow* window, int key, int scancode, int action, int mods)
+
+static int isPrintable(int key)
+{
+	switch (key) {
+	case GLFW_KEY_ESCAPE:
+	case GLFW_KEY_ENTER:
+	case GLFW_KEY_TAB:
+	case GLFW_KEY_BACKSPACE:
+	case GLFW_KEY_INSERT:
+	case GLFW_KEY_DELETE:
+	case GLFW_KEY_RIGHT:
+	case GLFW_KEY_LEFT:
+	case GLFW_KEY_DOWN:
+	case GLFW_KEY_UP:
+	case GLFW_KEY_PAGE_UP:
+	case GLFW_KEY_PAGE_DOWN:
+	case GLFW_KEY_HOME:
+	case GLFW_KEY_END:
+	case GLFW_KEY_CAPS_LOCK:
+	case GLFW_KEY_SCROLL_LOCK:
+	case GLFW_KEY_NUM_LOCK:
+	case GLFW_KEY_PRINT_SCREEN:
+	case GLFW_KEY_PAUSE:
+	case GLFW_KEY_F1:
+	case GLFW_KEY_F2:
+	case GLFW_KEY_F3:
+	case GLFW_KEY_F4:
+	case GLFW_KEY_F5:
+	case GLFW_KEY_F6:
+	case GLFW_KEY_F7:
+	case GLFW_KEY_F8:
+	case GLFW_KEY_F9:
+	case GLFW_KEY_F10:
+	case GLFW_KEY_F11:
+	case GLFW_KEY_F12:
+	case GLFW_KEY_F13:
+	case GLFW_KEY_F14:
+	case GLFW_KEY_F15:
+	case GLFW_KEY_F16:
+	case GLFW_KEY_F17:
+	case GLFW_KEY_F18:
+	case GLFW_KEY_F19:
+	case GLFW_KEY_F20:
+	case GLFW_KEY_F21:
+	case GLFW_KEY_F22:
+	case GLFW_KEY_F23:
+	case GLFW_KEY_F24:
+	case GLFW_KEY_F25:
+	case GLFW_KEY_KP_ENTER:
+	case GLFW_KEY_LEFT_SHIFT:
+	case GLFW_KEY_LEFT_CONTROL:
+	case GLFW_KEY_LEFT_ALT:
+	case GLFW_KEY_LEFT_SUPER:
+	case GLFW_KEY_RIGHT_SHIFT:
+	case GLFW_KEY_RIGHT_CONTROL:
+	case GLFW_KEY_RIGHT_ALT:
+	case GLFW_KEY_RIGHT_SUPER:
+	case GLFW_KEY_MENU:
+		return 0;
+	}
+	return 1;
+}
+
+int printable = 0;
+
+static void keycb(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
 	(void)scancode;
 	(void)mods;
 	if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
 		glfwSetWindowShouldClose(window, GL_TRUE);
+	if (action == GLFW_PRESS)
+		printable = isPrintable(key);
+
+	if (action == GLFW_PRESS) {
+		if (!isPrintable(key)) {
+			if (input.nkeys < MG_MAX_INPUTKEYS) {
+				input.keys[input.nkeys].type = MG_KEYPRESSED;
+				input.keys[input.nkeys].code = key;
+				input.nkeys++;
+			}
+		}
+	}
+	if (action == GLFW_RELEASE) {
+		if (!isPrintable(key)) {
+			if (input.nkeys < MG_MAX_INPUTKEYS) {
+				input.keys[input.nkeys].type = MG_KEYRELEASED;
+				input.keys[input.nkeys].code = key;
+				input.nkeys++;
+			}
+		}
+	}
 }
 
-static void mousebutton(GLFWwindow* window, int button, int action, int mods)
+static void charcb(GLFWwindow* window, unsigned int codepoint)
+{
+	(void)window;
+
+	if (printable) {
+		if (input.nkeys < MG_MAX_INPUTKEYS) {
+			input.keys[input.nkeys].type = MG_CHARTYPED;
+			input.keys[input.nkeys].code = codepoint;
+			input.nkeys++;
+		}
+	}
+}
+
+static void buttoncb(GLFWwindow* window, int button, int action, int mods)
 {
 	(void)window;
 	(void)mods;
 	if (button == GLFW_MOUSE_BUTTON_LEFT ) {
 		if (action == GLFW_PRESS) {
-			mbut |= MG_MOUSE_PRESSED;
+			input.mbut |= MG_MOUSE_PRESSED;
 		}
 		if (action == GLFW_RELEASE) {
-			mbut |= MG_MOUSE_RELEASED;
+			input.mbut |= MG_MOUSE_RELEASED;
 		}
 	}
 }
+
 
 static float sqr(float x) { return x*x; }
 
@@ -92,8 +192,9 @@ int main()
 		return -1;
 	}
 
-	glfwSetKeyCallback(window, key);
-    glfwSetMouseButtonCallback(window, mousebutton);
+	glfwSetKeyCallback(window, keycb);
+	glfwSetCharCallback(window, charcb);
+    glfwSetMouseButtonCallback(window, buttoncb);
 
 	glfwMakeContextCurrent(window);
 
@@ -185,8 +286,11 @@ int main()
 
 		nvgBeginFrame(vg, winWidth, winHeight, pxRatio, NVG_STRAIGHT_ALPHA);
 
-		mgFrameBegin(vg, winWidth, winHeight, mx, my, mbut);
-		mbut = 0;
+		input.mx = mx;
+		input.my = my;
+		mgFrameBegin(vg, winWidth, winHeight, &input);
+		input.nkeys = 0;
+		input.mbut = 0;
 
 		// Menu bar
 //		mgBeginPanel("Menu", 0,0, winWidth, 30, MG_ROW, MG_JUSTIFY, 0, 0,0);
