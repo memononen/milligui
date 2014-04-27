@@ -14,6 +14,10 @@ static float maxf(float a, float b) { return a > b ? a : b; }
 static float clampf(float a, float mn, float mx) { return a < mn ? mn : (a > mx ? mx : a); }
 static float absf(float a) { return a < 0.0f ? -a : a; }
 
+
+static struct MGwidget* findWidget(unsigned int id);
+
+
 #define LABEL_SIZE 14
 #define TEXT_SIZE 18
 #define BUTTON_PADX 10
@@ -44,41 +48,15 @@ struct MGopt* allocOpt()
 }
 
 
-#define TEXT_POOL_SIZE 8000
-
-static char textPool[TEXT_POOL_SIZE];
-static int textPoolSize = 0;
-
-static char* allocText(const char* text)
-{
-	unsigned len = strlen(text)+1;
-	if (textPoolSize + len >= TEXT_POOL_SIZE)
-		return 0;
-	char* dst = &textPool[textPoolSize]; 
-	memcpy(dst, text, len);
-	textPoolSize += len;
-	return dst;
-}
-
-static char* allocTextLen(const char* text, int len)
-{
-	if (textPoolSize + len >= TEXT_POOL_SIZE)
-		return 0;
-	char* dst = &textPool[textPoolSize]; 
-	memcpy(dst, text, len);
-	textPoolSize += len;
-	return dst;
-}
-
 #define INPUTTEMP_POOL_SIZE 8000
 static unsigned char inputTempPool[INPUTTEMP_POOL_SIZE];
 static int inputTempPoolSize = 0;
 
-static unsigned char* allocInputTemp(int size)
+static void* allocInputTemp(int size)
 {
 	if (inputTempPoolSize + size >= INPUTTEMP_POOL_SIZE)
 		return NULL;
-	unsigned char* dst = &inputTempPool[inputTempPoolSize]; 
+	void* dst = &inputTempPool[inputTempPoolSize]; 
 	inputTempPoolSize += size;
 	return dst;
 }
@@ -87,15 +65,14 @@ static unsigned char* allocInputTemp(int size)
 static unsigned char outputTempPool[OUTPUTTEMP_POOL_SIZE*2];
 static int outputTempPoolSize = 0;
 
-static unsigned char* allocOutputTemp(int size)
+static void* allocOutputTemp(int size)
 {
 	if (outputTempPoolSize + size >= OUTPUTTEMP_POOL_SIZE)
 		return NULL;
-	unsigned char* dst = &outputTempPool[outputTempPoolSize]; 
+	void* dst = &outputTempPool[outputTempPoolSize]; 
 	outputTempPoolSize += size;
 	return dst;
 }
-
 
 struct MGoutputResult {
 	unsigned int id;
@@ -104,18 +81,29 @@ struct MGoutputResult {
 		int ival;
 		float fval;
 	};
+	int size;
 };
 
 #define OUTPUTRES_POOL_SIZE 64
 struct MGoutputResult outputResPool[OUTPUTRES_POOL_SIZE];
 static int outputResPoolSize = 0;
 
-static void mgSetResultPtr(unsigned int id, void* data)
+static void mgSetResultBlock(unsigned int id, void* data, int size)
 {
+	void* buf;
 	if (outputResPoolSize + 1 >= OUTPUTRES_POOL_SIZE) return;
+	buf = (char*)allocOutputTemp(size);
+	if (buf == NULL) return;
+	memcpy(buf, data, size);
 	outputResPool[outputResPoolSize].id = id;
-	outputResPool[outputResPoolSize].ptrval = data;
+	outputResPool[outputResPoolSize].ptrval = buf;
+	outputResPool[outputResPoolSize].size = size;
 	outputResPoolSize++;
+}
+
+static void mgSetResultStr(unsigned int id, char* str, int size)
+{
+	mgSetResultBlock(id, (void*)str, size);
 }
 
 static void mgSetResultInt(unsigned int id, int data)
@@ -134,38 +122,48 @@ static void mgSetResultFloat(unsigned int id, float data)
 	outputResPoolSize++;
 }
 
-static void* mgGetResultPtr(unsigned int id)
+static int mgGetResultBlock(unsigned int id, void** val, int* size)
 {
 	int i;
 	for (i = 0; i < outputResPoolSize; i++) {
 		if (outputResPool[i].id == id) {
-			return outputResPool[i].ptrval;
+			if (val != NULL) *val = outputResPool[i].ptrval;
+			if (size != NULL) *size = outputResPool[i].size;
+			return 1;
 		}
 	}
-	return NULL;
+	return 0;
 }
 
-static int* mgGetResultInt(unsigned int id)
+static int mgGetResultStr(unsigned int id, char** text, int* size)
 {
-	int i;
-	for (i = 0; i < outputResPoolSize; i++) {
-		if (outputResPool[i].id == id) {
-			return &outputResPool[i].ival;
-		}
-	}
-	return NULL;
+	return mgGetResultBlock(id, (void**)text, size);
 }
 
-static float* mgGetResultFloat(unsigned int id)
+static int mgGetResultInt(unsigned int id, int* val)
 {
 	int i;
 	for (i = 0; i < outputResPoolSize; i++) {
 		if (outputResPool[i].id == id) {
-			return &outputResPool[i].fval;
+			*val = outputResPool[i].ival;
+			return 1;
 		}
 	}
-	return NULL;
+	return 0;
 }
+
+static int mgGetResultFloat(unsigned int id, float* val)
+{
+	int i;
+	for (i = 0; i < outputResPoolSize; i++) {
+		if (outputResPool[i].id == id) {
+			*val = outputResPool[i].fval;
+			return 1;
+		}
+	}
+	return 0;
+}
+
 
 
 #define MG_WIDGET_POOL_SIZE 1000
@@ -290,7 +288,6 @@ static void deleteIcons()
 struct MGstateHeader {
 	unsigned int id;
 	int size;
-	short counter;
 	short num;
 };
 
@@ -314,6 +311,10 @@ struct MGcontext
 	unsigned int pressed;
 	unsigned int dragged;
 	unsigned int released;
+	unsigned int blurred;
+	unsigned int focused;
+	unsigned int entered;
+	unsigned int exited;
 
 	struct MGwidget* boxStack[MG_BOX_STACK_SIZE];
 	int boxStackCount;
@@ -336,94 +337,78 @@ struct MGcontext
 
 	int width, height;
 
-	struct MGhit result;
+	struct MGhit hoverHit;
+	struct MGhit activeHit;
 };
 
 static struct MGcontext context;
 
-static unsigned char* findState(unsigned int id, unsigned short num, int size)
+static int mgGetStateBlock(unsigned int id, int num, void** ptr, int* size)
 {	
 	int i;
-	unsigned char* ptr = context.stateMem;
+	unsigned char* mem = context.stateMem;
 	for (i = 0; i < context.stateCount; i++) {
-		struct MGstateHeader* state = (struct MGstateHeader*)ptr;
-		int size = sizeof(struct MGstateHeader) + state->size;
+		struct MGstateHeader* state = (struct MGstateHeader*)mem;
+		int stateSize = sizeof(struct MGstateHeader) + state->size;
 		if (state->id == id && state->num == num) {
-			if (state->size == size) {
-				state->counter = 1; // touch
-				return ptr + sizeof(struct MGstateHeader);
-			}
+//			printf("mgGetStateBlock %d/%d %d==%d\n", id, num, state->size, size);
+			if (ptr != NULL) *ptr = mem + sizeof(struct MGstateHeader);
+			if (size != NULL) *size = state->size;
+			return 1;
 		}
-		ptr += size;
+		mem += stateSize;
 	}
-	return NULL;
+	return 0;
 }
 
-static void freeState(unsigned int id, short num)
+static void mgFreeStateBlock(unsigned int id, short num)
 {	
 	int i;
-	unsigned char* ptr = context.stateMem;
+	unsigned char* mem = context.stateMem;
 	for (i = 0; i < context.stateCount; i++) {
-		struct MGstateHeader* state = (struct MGstateHeader*)ptr;
-		int size = sizeof(struct MGstateHeader) + state->size;
+		struct MGstateHeader* state = (struct MGstateHeader*)mem;
+		int stateSize = sizeof(struct MGstateHeader) + state->size;
 		if (state->id == id && state->num == num) {
 			// Mark for delete
-			printf("mark free %d/%d\n", id, num);
-			state->counter = 0;
+//			printf("mgFreeStateBlock free %d/%d\n", id, num);
 			state->id = 0;
 			return;
 		}
-		ptr += size;
+		mem += stateSize;
 	}
 }
 
-static unsigned char* allocState(unsigned int id, unsigned short num, int size)
+static int mgAllocStateBlock(unsigned int id, int num, void** ptr, int size)
 {
 	int i;
 	struct MGstateHeader* state;
-	unsigned char* ptr;
-	unsigned char* prev = NULL;
-	int prevSize = 0;
+	unsigned char* mem;
 	int allocSize = sizeof(struct MGstateHeader) + size;
 
-	// Check if the transient exists.
-	ptr = context.stateMem;
-	for (i = 0; i < context.stateCount; i++) {
-		state = (struct MGstateHeader*)ptr;
-		if (state->id == id && state->num == num) {
-			if (state->size != size) {
-				allocSize = sizeof(struct MGstateHeader) + maxi(state->size, size);
-				prev = ptr;
-				break;
-			}
-			state->counter = 1; // touch
-			return ptr + sizeof(struct MGstateHeader);
-		}
-		ptr += sizeof(struct MGstateHeader) + state->size; 
-	}
+	// Free anu state block at same location.
+	mgFreeStateBlock(id, num);
 
-	if ((context.stateMemSize + allocSize) > MG_TRANSIENT_POOL_SIZE) {
-		printf("transient pool exhausted!\n");
-		return NULL;
+	if ((context.stateMemSize + allocSize) > MG_STATE_POOL_SIZE) {
+		printf("state pool exhausted!\n");
+		return 0;
 	}
 
 	// Allocate new block
-	ptr = &context.stateMem[context.stateMemSize];
+	mem = &context.stateMem[context.stateMemSize];
 	context.stateMemSize += allocSize; 
-	if (prev != NULL)
-		memcpy(ptr, prev, allocSize);
-	else
-		memset(ptr, 0, allocSize);
-	state = (struct MGstateHeader*)ptr;
+	memset(mem, 0, allocSize);
+	state = (struct MGstateHeader*)mem;
 	state->id = id;
 	state->num = num;
-	state->counter = 1;
 	state->size = size;
 
 	context.stateCount++;
 
-	return ptr + sizeof(struct MGstateHeader);
+	if (ptr != NULL) *ptr = mem + sizeof(struct MGstateHeader);
+
+	return 1;
 }
+
 
 static void garbageCollectStates()
 {
@@ -438,8 +423,7 @@ static void garbageCollectStates()
 	for (i = 0; i < context.stateCount; i++) {
 		state = (struct MGstateHeader*)ptr;
 		size = sizeof(struct MGstateHeader) + state->size;
-		state->counter--;
-		if (state->counter >= 0) {
+		if (state->id != 0 && findWidget(state->id) != NULL) {
 			memmove(tail, ptr, size);
 			tail += size;
 			n++;
@@ -449,6 +433,73 @@ static void garbageCollectStates()
 
 	context.stateMemSize = (int)(tail - context.stateMem);
 	context.stateCount = n;
+}
+
+
+static int mgGetValueBlock(unsigned int id, void** val, int* size)
+{
+	struct MGwidget* w = findWidget(id);
+	if (w == NULL) { return 0; }
+	if (w->uptr == NULL) return 0;
+	if (w->uptrsize == 0) return 0;
+	if (val != NULL) *val = w->uptr;
+	if (size != NULL) *size = w->uptrsize;
+
+//	printf("get value block %d: %p size=%d\n", id, w->uptr, w->uptrsize);
+
+	return 1;
+}
+
+static int mgSetValueBlock(unsigned int id, void* val, int size)
+{
+	void* buf;
+	struct MGwidget* w = findWidget(id);
+	if (w == NULL) return 0;
+	buf = allocInputTemp(size);
+	if (buf == NULL) return 0;
+	memcpy(buf, val, size);
+	w->uptr = buf;
+	w->uptrsize = size;
+
+//	printf("set value block %d: %p size=%d\n", id, w->uptr, w->uptrsize);
+
+	return 1;
+}
+
+static int mgGetValueStr(unsigned int id, char** text, int* maxText)
+{
+	return mgGetValueBlock(id, (void**)text, maxText);
+}
+
+static int mgSetValueStr(unsigned int id, char* text, int maxText)
+{
+	return mgSetValueBlock(id, (void*)text, maxText);
+}
+
+static int mgGetValueInt(unsigned int id, int* val)
+{	
+	int* ptr;
+	if (!mgGetValueBlock(id, (void**)&ptr, NULL)) return 0;
+	*val = *ptr;
+	return 1;
+}
+
+static int mgSetValueInt(unsigned int id, int val)
+{
+	return mgSetValueBlock(id, &val, sizeof(int));
+}
+
+static int mgGetValueFloat(unsigned int id, float* val)
+{
+	float* ptr;
+	if (!mgGetValueBlock(id, (void**)&ptr, NULL)) return 0;
+	*val = *ptr;
+	return 1;
+}
+
+static int mgSetValueFloat(unsigned int id, float val)
+{
+	return mgSetValueBlock(id, &val, sizeof(float));
 }
 
 
@@ -572,7 +623,6 @@ int mgInit()
 {
 	memset(&context, 0, sizeof(context));
 
-	textPoolSize = 0;
 	widgetPoolSize = 0;
 	stylePoolSize = 0;
 	optPoolSize = 0;
@@ -596,18 +646,83 @@ int mgInit()
 		// Normal
 		mgOpts(
 			mgSpacing(SPACING),
-			mgFillColor(220,220,220,255),
+			mgHeight(SLIDER_HANDLE)
+/*			mgFillColor(220,220,220,255),
 			mgBorderSize(2.0f),
-			mgContentColor(220,220,220,255)
+			mgContentColor(220,220,220,255)*/
 		),
 		// Hover
 		mgOpts(
+//			mgFillColor(255,255,255,255)
+		),
+		// Active
+		mgOpts(
+/*			mgFillColor(32,32,32,255),
+			mgBorderColor(255,255,255,255)*/
+		),
+		// Focus
+		mgOpts(
+//			mgBorderColor(0,192,255,255)
+		)
+	);
+
+	mgCreateStyle("slider-canvas.slot",
+		mgOpts(
+			mgHeight(2),
+			mgFillColor(0,0,0,128)
+		),
+		mgOpts(
+			mgHeight(4)
+		),
+		mgOpts(
+			mgHeight(4)
+		),
+		mgOpts()
+	);
+
+	mgCreateStyle("slider-canvas.bar",
+		// Normal
+		mgOpts(
+//			mgPaddingX(SLIDER_HANDLE/2),
+			mgHeight(2), //SLIDER_HANDLE),
+//			mgOverflow(MG_VISIBLE),
+			mgFillColor(220,220,220,255)
+		),
+		// Hover
+		mgOpts(
+			mgHeight(4), //SLIDER_HANDLE),
 			mgFillColor(255,255,255,255)
+		),
+		// Active
+		mgOpts(
+			mgHeight(4), //SLIDER_HANDLE),
+			mgFillColor(255,192,0,255)
+		),
+		// Focus
+		mgOpts(
+		)
+	);
+
+	mgCreateStyle("slider-canvas.handle",
+		// Normal
+		mgOpts(
+			mgWidth(SLIDER_HANDLE),
+			mgHeight(SLIDER_HANDLE),
+			mgFillColor(255,255,255,255),
+			mgBorderColor(255,255,255,0),
+			mgBorderSize(2),
+			mgCornerRadius(SLIDER_HANDLE/2)
+		),
+		// Hover
+		mgOpts(
+//			mgFillColor(220,220,220,255)
 		),
 		// Active
 		mgOpts(
 			mgFillColor(32,32,32,255),
 			mgBorderColor(255,255,255,255)
+//			mgBorderColor(255,255,255,255),
+//			mgFillColor(32,32,32,255)
 		),
 		// Focus
 		mgOpts(
@@ -1095,7 +1210,6 @@ void mgFrameBegin(struct NVGcontext* vg, int width, int height, struct MGinputSt
 	context.idStack[0].base = 0;
 	context.idStack[0].count = 0;
 
-	textPoolSize = 0;
 	widgetPoolSize = 0;
 	optPoolSize = 0;
 	inputTempPoolSize = 0;
@@ -1187,6 +1301,7 @@ static struct MGwidget* hitTest(struct MGwidget* box, const float* bounds)
 	return hit;
 } 
 
+/*
 static struct MGwidget* updateState(struct MGwidget* box, unsigned int hover, unsigned int active, unsigned int focus, unsigned char state)
 {
 	struct MGwidget* ret = NULL;
@@ -1220,7 +1335,8 @@ static struct MGwidget* updateState(struct MGwidget* box, unsigned int hover, un
 	}
 
 	return ret;
-} 
+}
+*/
 
 /*
 static void dumpId(struct MGwidget* box, int indent)
@@ -1248,6 +1364,38 @@ static void fireLogic(unsigned int id, int event, struct MGhit* hit)
 	w->logic(w->uptr, w, event, hit);
 }
 
+static void innerBounds(struct MGwidget* w, struct MGrect* b)
+{
+	float padx = minf(w->style.paddingx, maxf(0.0f, w->width));
+	float pady = minf(w->style.paddingy, maxf(0.0f, w->height));
+	b->x = w->x + padx;
+	b->y = w->y + pady;
+	b->width = maxf(0.0f, w->width - padx*2);
+	b->height = maxf(0.0f, w->height - pady*2);
+}
+
+static void setHit(unsigned int id, struct MGhit* hit)
+{
+	struct MGwidget* w = findWidget(id);
+	if (w == NULL) return;
+
+	hit->rect.x = w->x;
+	hit->rect.y = w->y;
+	hit->rect.width = w->width;
+	hit->rect.height = w->height;
+
+	if (w->parent != NULL) {
+		innerBounds(w->parent, &hit->view);
+	} else {
+		hit->rect.x = 0;
+		hit->rect.y = 0;
+		hit->rect.width =  context.width;
+		hit->rect.height = context.height;
+	}
+
+	hit->style = w->style;
+}
+
 static void updateLogic(const float* bounds)
 {
 	int i;
@@ -1255,11 +1403,6 @@ static void updateLogic(const float* bounds)
 //	struct MGwidget* active = NULL;
 //	struct MGwidget* w = NULL;
 	int deactivate = 0;
-
-	unsigned int focused = 0;
-	unsigned int blurred = 0;
-	unsigned int entered = 0;
-	unsigned int exited = 0;
 
 /*	printf("---\n");
 	for (i = 0; i < context.panelCount; i++)
@@ -1274,6 +1417,10 @@ static void updateLogic(const float* bounds)
 	}
 
 //	context.hover = 0;
+	context.focused = 0;
+	context.blurred = 0;
+	context.entered = 0;
+	context.exited = 0;
 	context.clicked = 0;
 	context.pressed = 0;
 	context.dragged = 0;
@@ -1282,14 +1429,14 @@ static void updateLogic(const float* bounds)
 	if (context.active == 0) {
 		unsigned int id = hit != NULL ? hit->id : 0;
 		if (context.hover != id) {
-			exited = context.hover;
-			entered = id;
+			context.exited = context.hover;
+			context.entered = id;
 			context.hover = id;
 		}
 		if (context.input.mbut & MG_MOUSE_PRESSED) {
 			if (context.focus != id) {
-				blurred = context.focus;
-				focused = id;
+				context.blurred = context.focus;
+				context.focused = id;
 			}
 			context.focus = id;
 			context.active = id;
@@ -1301,8 +1448,8 @@ static void updateLogic(const float* bounds)
 		unsigned int id = hit != NULL ? hit->id : 0;
 		if (id == 0 || id == context.active) {
 			if (context.hover != id) {
-				exited = context.hover;
-				entered = id;
+				context.exited = context.hover;
+				context.entered = id;
 				context.hover = id;
 			}
 //			context.hover = hit->id;
@@ -1345,25 +1492,37 @@ static void updateLogic(const float* bounds)
 		context.drag = 0;
 	}
 
-	context.result.code = 0;
-	context.result.mx = context.input.mx;
-	context.result.my = context.input.my;
-	context.result.deltamx = context.deltamx;
-	context.result.deltamy = context.deltamy;
+	memset(&context.hoverHit, 0, sizeof(context.hoverHit));
+	memset(&context.activeHit, 0, sizeof(context.hoverHit));
 
-	fireLogic(blurred, MG_BLURRED, &context.result);
-	fireLogic(focused, MG_FOCUSED, &context.result);
-	fireLogic(context.pressed, MG_PRESSED, &context.result);
-	fireLogic(context.dragged, MG_DRAGGED, &context.result);
-	fireLogic(context.released, MG_RELEASED, &context.result);
-	fireLogic(context.clicked, MG_CLICKED, &context.result);
-	fireLogic(exited, MG_EXITED, &context.result);
-	fireLogic(entered, MG_ENTERED, &context.result);
+	context.hoverHit.code = 0;
+	context.hoverHit.mx = context.input.mx;
+	context.hoverHit.my = context.input.my;
+	context.hoverHit.deltamx = context.deltamx;
+	context.hoverHit.deltamy = context.deltamy;
+
+	context.activeHit.code = 0;
+	context.activeHit.mx = context.input.mx;
+	context.activeHit.my = context.input.my;
+	context.activeHit.deltamx = context.deltamx;
+	context.activeHit.deltamy = context.deltamy;
+
+	setHit(context.hover, &context.hoverHit);
+	setHit(context.active, &context.activeHit);
+
+	fireLogic(context.blurred, MG_BLURRED, &context.activeHit);
+	fireLogic(context.focused, MG_FOCUSED, &context.activeHit);
+	fireLogic(context.pressed, MG_PRESSED, &context.activeHit);
+	fireLogic(context.dragged, MG_DRAGGED, &context.activeHit);
+	fireLogic(context.released, MG_RELEASED, &context.activeHit);
+	fireLogic(context.clicked, MG_CLICKED, &context.activeHit);
+	fireLogic(context.exited, MG_EXITED, &context.activeHit);
+	fireLogic(context.entered, MG_ENTERED, &context.activeHit);
 
 	if (context.focus != 0) {
 		for (i = 0; i < context.input.nkeys; i++) {
-			context.result.code = context.input.keys[i].code;
-			fireLogic(context.focus, context.input.keys[i].type, &context.result);
+			context.activeHit.code = context.input.keys[i].code;
+			fireLogic(context.focus, context.input.keys[i].type, &context.activeHit);
 		}
 	}
 	context.input.nkeys = 0;
@@ -1483,35 +1642,35 @@ static void drawIcon(struct MGwidget* w)
 	nvgRestore(context.vg);
 }
 
-static void drawRect(struct MGwidget* w)
+static void drawRect(float x, float y, float width, float height, struct MGstyle* style)
 {
-	// round
-	int x = w->x;
-	int y = w->y;
-	int width = w->width;
-	int height = w->height;
-
-	if (isStyleSet(&w->style, MG_FILLCOLOR_ARG)) {
+	if (isStyleSet(style, MG_FILLCOLOR_ARG)) {
 		nvgBeginPath(context.vg);
-		if (isStyleSet(&w->style, MG_CORNERRADIUS_ARG)) {
-			nvgRoundedRect(context.vg, x, y, width, height, w->style.cornerRadius);
+		if (isStyleSet(style, MG_CORNERRADIUS_ARG)) {
+			float w = maxf(0, width);
+			float h = maxf(0, height);
+			float r = minf(style->cornerRadius, minf(w, h));
+			nvgRoundedRect(context.vg, x, y, w, h, r);
 		} else {
 			nvgRect(context.vg, x, y, width, height);
 		}
-		nvgFillColor(context.vg, nvgCol(w->style.fillColor));
+		nvgFillColor(context.vg, nvgCol(style->fillColor));
 		nvgFill(context.vg);
 	}
 
-	if (isStyleSet(&w->style, MG_BORDERCOLOR_ARG)) {
-		float s = w->style.borderSize * 0.5f;
+	if (isStyleSet(style, MG_BORDERCOLOR_ARG)) {
+		float s = style->borderSize * 0.5f;
 		nvgBeginPath(context.vg);
-		if (isStyleSet(&w->style, MG_CORNERRADIUS_ARG)) {
-			nvgRoundedRect(context.vg, x+s, y+s, width-s*2, height-s*2, w->style.cornerRadius - s);
+		if (isStyleSet(style, MG_CORNERRADIUS_ARG)) {
+			float w = maxf(0, width-s*2);
+			float h = maxf(0, height-s*2);
+			float r = minf(style->cornerRadius - s, minf(w, h));
+			nvgRoundedRect(context.vg, x+s, y+s, w, h, r);
 		} else {
 			nvgRect(context.vg, x+s, y+s, width-s*2, height-s*2);
 		}
-		nvgStrokeWidth(context.vg, w->style.borderSize);
-		nvgStrokeColor(context.vg, nvgCol(w->style.borderColor));
+		nvgStrokeWidth(context.vg, style->borderSize);
+		nvgStrokeColor(context.vg, nvgCol(style->borderColor));
 		nvgStroke(context.vg);
 	}
 }
@@ -1594,7 +1753,7 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 
 	nvgScissor(context.vg, (int)bounds[0], (int)bounds[1], (int)bounds[2], (int)bounds[3]);
 
-	drawRect(box);
+	drawRect(box->x, box->y, box->width, box->height, &box->style);
 
 	if (debug) drawDebugRect(box);
 
@@ -1627,7 +1786,7 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 				break;
 
 			case MG_TEXT:
-				drawRect(w);
+				drawRect(w->x, w->y, w->width, w->height, &w->style);
 				if (debug) drawDebugRect(w);
 				isectBounds(wbounds, bbounds, w->x, w->y, w->width, w->height);
 				if (wbounds[2] > 0.0f && wbounds[3] > 0.0f) {
@@ -1637,7 +1796,7 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 				break;
 
 			case MG_PARAGRAPH:
-				drawRect(w);
+				drawRect(w->x, w->y, w->width, w->height, &w->style);
 				if (debug) drawDebugRect(w);
 				isectBounds(wbounds, bbounds, w->x, w->y, w->width, w->height);
 				if (wbounds[2] > 0.0f && wbounds[3] > 0.0f) {
@@ -2154,10 +2313,13 @@ struct MGopt* mgPackOpt2(unsigned char a, int x, int y)
 
 struct MGopt* mgPackOptStr(unsigned char a, const char* s)
 {
+	int size;
 	struct MGopt* opt = allocOpt();
 	if (opt == NULL) return NULL;
 	opt->type = a;
-	opt->sval = allocText(s);
+	size = strlen(s) + 1;
+	opt->sval = (char*)allocInputTemp(size);
+	memcpy(opt->sval, s, size);
 	return opt;
 }
 
@@ -2366,18 +2528,34 @@ static struct MGhit* hitResult(struct MGwidget* w)
 {
 	if (w == NULL) return NULL;
 	if (w->style.logic == MG_CLICK && context.clicked == w->id)
-		return &context.result;
+		return &context.activeHit;
 	if (w->style.logic == MG_DRAG && (context.pressed == w->id || context.dragged == w->id || context.released == w->id))
-		return &context.result;
+		return &context.activeHit;
 	return NULL;
 }
 
 static struct MGhit* hitResult2(unsigned int id)
 {
 	if (context.clicked == id || context.pressed == id || context.dragged == id || context.released == id)
-		return &context.result;
+		return &context.activeHit;
 	return NULL;
 }
+
+static int mgGetHit(unsigned int id, struct MGhit** hit)
+{
+	if (context.active == id) {
+		*hit = &context.activeHit;
+		return 1;
+	}
+	if (context.hover == id) {
+		*hit = &context.hoverHit;
+		return 1;
+	}
+	return 0;
+}
+//	context.hoverHit.deltamy = context.deltamy;
+//	context.activeHit.code = 0;
+
 
 static unsigned char getState(struct MGwidget* w)
 {
@@ -2596,6 +2774,52 @@ static struct MGstyle computeStyle(unsigned char wstate, struct MGopt* opts, con
 	return style;
 }
 
+static int getPath(struct MGwidget* w, const char* path[], int maxPath)
+{
+	int n = 0;
+	if (w == NULL) return 0;
+	n = getPath(w->parent, path, maxPath);
+	if (n < maxPath && w->tag != NULL)
+		path[n++] = w->tag;
+	return n;
+}
+
+static struct MGstyle computeStyle2(struct MGwidget* w, unsigned char wstate, struct MGopt* opts, const char* subtag)
+{
+	int i = 0;
+	const char* path[100];
+	int npath = 0;
+	struct MGnamedStyle* match = NULL;
+	struct MGstyle style;
+
+	memset(&style, 0, sizeof(style));
+
+	npath = getPath(w, path, 100);
+	if (subtag != NULL)
+		path[npath++] = subtag;
+
+	match = selectStyle(path, npath);
+	if (match != NULL) {
+		if (wstate & MG_ACTIVE)
+			style = match->active;
+		else if (wstate & MG_HOVER)
+			style = match->hover;
+		else if (wstate & MG_FOCUS)
+			style = match->focus;
+		else
+			style = match->normal;
+	}
+	flattenStyle(&style, opts);
+	return style;
+}
+
+static struct MGstyle computeStyle3(unsigned int id, struct MGopt* opts, const char* subtag)
+{
+	struct MGwidget* w = findWidget(id);
+	unsigned char wstate = getState(w);
+	return computeStyle2(w, wstate, opts, subtag);
+}
+
 unsigned int mgPanelBegin(int dir, float x, float y, int zidx, struct MGopt* opts)
 {
 	struct MGwidget* w = NULL;
@@ -2608,7 +2832,8 @@ unsigned int mgPanelBegin(int dir, float x, float y, int zidx, struct MGopt* opt
 	w->x = x;
 	w->y = y;
 	w->dir = dir;
-	w->style = computeStyle(getState(w), opts, NULL);
+	w->tag = getTag(opts);
+	w->style = computeStyle2(w, getState(w), opts, NULL);
 
 	pushBox(w);
 	pushTag(getTag(opts));
@@ -2641,7 +2866,8 @@ unsigned int mgBoxBegin(int dir, struct MGopt* opts)
 	opts = mgOpts(mgTag("box"), opts);
 
 	w->dir = dir;
-	w->style = computeStyle(getState(w), opts, NULL);
+	w->tag = getTag(opts);
+	w->style = computeStyle2(w, getState(w), opts, NULL);
 
 	pushBox(w);
 	pushTag(getTag(opts));
@@ -2670,14 +2896,20 @@ unsigned int mgBox(struct MGopt* opts)
 unsigned int mgParagraph(const char* text, struct MGopt* opts)
 {
 	float tw, th;
+	int size;
 	struct MGwidget* parent = getParent();
 	struct MGwidget* w = allocWidget(MG_PARAGRAPH);
 	if (parent != NULL)
 		addChildren(parent, w);
 
-	w->text = allocText(text);
+	size = strlen(text)+1;
+	w->text = (char*)allocInputTemp(size);
+	memcpy(w->text, text, size);
 
-	w->style = computeStyle(getState(w), mgOpts(mgTag("text"), opts), NULL);
+	opts = mgOpts(mgTag("text"), opts);
+
+	w->tag = getTag(opts);
+	w->style = computeStyle2(w, getState(w), opts, NULL);
 
 	textSize(NULL, w->style.fontSize, NULL, &th);
 	paragraphSize(w->text, w->style.fontSize, w->style.lineHeight, th*20, &tw, &th);
@@ -2690,15 +2922,20 @@ unsigned int mgParagraph(const char* text, struct MGopt* opts)
 
 unsigned int mgText(const char* text, struct MGopt* opts)
 {
+	int size;
 	float tw, th;
 	struct MGwidget* parent = getParent();
 	struct MGwidget* w = allocWidget(MG_TEXT);
 	if (parent != NULL)
 		addChildren(parent, w);
 
-	w->text = allocText(text);
+	size = strlen(text)+1;
+	w->text = (char*)allocInputTemp(size);
+	memcpy(w->text, text, size);
 
-	w->style = computeStyle(getState(w), mgOpts(mgTag("text"), opts), NULL);
+	opts = mgOpts(mgTag("text"), opts);
+	w->tag = getTag(opts);
+	w->style = computeStyle2(w, getState(w), opts, NULL);
 	textSize(w->text, w->style.fontSize, &tw, &th);
 	w->cwidth = tw;
 	w->cheight = th;
@@ -2718,7 +2955,9 @@ unsigned int mgIcon(const char* name, struct MGopt* opts)
 	if (name != NULL)
 		w->icon.icon = findIcon(name);
 
-	w->style = computeStyle(getState(w), mgOpts(mgTag("icon"), opts), NULL);
+	opts = mgOpts(mgTag("icon"), opts);
+	w->tag = getTag(opts);
+	w->style = computeStyle2(w, getState(w), opts, NULL);
 
 	if (w->icon.icon != NULL) {
 		w->cwidth = w->icon.icon->image->width;
@@ -2747,7 +2986,7 @@ unsigned int mgIcon(const char* name, struct MGopt* opts)
 	return w->id;
 }
 
-unsigned int mgCanvas(float width, float height, MGcanvasLogicFun logic, MGcanvasRenderFun render, void* uptr, struct MGopt* opts)
+unsigned int mgCanvas(float width, float height, MGcanvasLogicFun logic, MGcanvasRenderFun render, struct MGopt* opts)
 {
 	struct MGwidget* parent = getParent();
 	struct MGwidget* w = allocWidget(MG_CANVAS);
@@ -2756,91 +2995,94 @@ unsigned int mgCanvas(float width, float height, MGcanvasLogicFun logic, MGcanva
 
 	w->logic = logic;
 	w->render = render;
-	w->uptr = uptr;
 	w->cwidth = width;
 	w->cheight = height;
 
-	w->style = computeStyle(getState(w), mgOpts(mgTag("canvas"), opts), NULL);
+	opts = mgOpts(mgTag("canvas"), opts);
+	w->tag = getTag(opts);
+	w->style = computeStyle2(w, getState(w), opts, NULL);
 
 	return w->id;
 }
+
+
+float calcStyleWidth(float base, struct MGstyle* style)
+{
+	if (isStyleSet(style, MG_PROPWIDTH_ARG))
+		return base * style->width;
+	else if (isStyleSet(style, MG_WIDTH_ARG))
+		return style->width;
+	return base;
+}
+
+float calcStyleHeight(float base, struct MGstyle* style)
+{
+	if (isStyleSet(style, MG_PROPHEIGHT_ARG)) {
+//		printf("height prop=%f %f\n", style->height, base * style->height);
+		return base * style->height;
+	} else if (isStyleSet(style, MG_HEIGHT_ARG)) {
+//		printf("height abs %f\n", style->height);
+		return style->height;
+	}
+//	printf("height base %f\n", base);
+	return base;
+}
+
 
 struct MGsliderState {
 	float value;
 	float vstart;
 	float vmin, vmax;
-/*	struct MGstyle slotStyle;
-	struct MGstyle barStyle;
-	struct MGstyle handleStyle;*/
 };
 
-static void innerBounds(struct MGwidget* w, struct MGrect* b)
-{
-	float padx = minf(w->style.paddingx, maxf(0.0f, w->width));
-	float pady = minf(w->style.paddingy, maxf(0.0f, w->height));
-	b->x = w->x + padx;
-	b->y = w->y + pady;
-	b->width = maxf(0.0f, w->width - padx*2);
-	b->height = maxf(0.0f, w->height - pady*2);
-}
 
 static void sliderDraw(void* uptr, struct MGwidget* w, struct NVGcontext* vg, const float* view)
 {
-	struct MGsliderState* inval = (struct MGsliderState*)uptr;
-	struct MGsliderState* state = (struct MGsliderState*)findState(w->id, 0, sizeof(struct MGsliderState));
-	float v, x, hr;
-	if (inval == NULL) return;
+	struct MGsliderState* state;
+	struct MGstyle slotStyle;
+	struct MGstyle barStyle;
+	struct MGstyle handleStyle;
+	float x, h, hr;
 
-	if (state != NULL)
-		inval = state;
+	(void)uptr;
+	(void)view;
+
+	if (mgActive(w->id)) {
+		if (!mgGetStateBlock(w->id, 0, (void**)&state, NULL)) return;
+	} else {
+		if (!mgGetValueBlock(w->id, (void**)&state, NULL)) return;
+	}
+
+	slotStyle = computeStyle3(w->id, NULL, "slot");
+	barStyle = computeStyle3(w->id, NULL, "bar");
+	handleStyle = computeStyle3(w->id, NULL, "handle");
 
 	hr = maxf(2.0f, w->height - w->style.paddingy*2) / 2.0f;
 
 	// Slot
-	nvgBeginPath(vg);
-	nvgMoveTo(vg, w->x+hr, (int)(w->y+w->height/2));
-	nvgLineTo(vg, w->x-hr + w->width, (int)(w->y+w->height/2));
-	nvgStrokeColor(vg, nvgRGBA(0,0,0,64));
-	nvgStrokeWidth(vg,2.0f);
-	nvgStroke(vg);
+	h = calcStyleHeight(w->height, &slotStyle);
+	drawRect(w->x+hr, w->y + w->height/2 - h/2, w->width-hr*2, h, &slotStyle);
 
 	// Handle position
-	x = w->x + hr + (inval->value - inval->vmin) / (inval->vmax - inval->vmin) * (w->width - hr*2);
+	x = w->x + hr + (state->value - state->vmin) / (state->vmax - state->vmin) * (w->width - hr*2);
 
 	// Bar
-	if (isStyleSet(&w->style, MG_CONTENTCOLOR_ARG)) {
-		nvgBeginPath(vg);
-		nvgMoveTo(vg, w->x+hr, (int)(w->y+w->height/2));
-		nvgLineTo(vg, x, (int)(w->y+w->height/2));
-		nvgStrokeColor(vg, nvgCol(w->style.contentColor));
-		nvgStrokeWidth(vg,2.0f);
-		nvgStroke(vg);
-	}
+	h = calcStyleHeight(w->height, &barStyle);
+	drawRect(w->x+hr, w->y + w->height/2 - h/2, x - (w->x+hr), h, &barStyle);
 
 	// Handle
-	if (isStyleSet(&w->style, MG_FILLCOLOR_ARG)) {
-		nvgBeginPath(vg);
-		nvgCircle(vg, x, w->y+w->height/2, hr);
-		nvgFillColor(vg, nvgCol(w->style.fillColor));
-		nvgFill(vg);
-	}
-	if (isStyleSet(&w->style, MG_BORDERCOLOR_ARG)) {
-		float s = w->style.borderSize * 0.5f;
-		nvgBeginPath(vg);
-		nvgCircle(vg, x, w->y+w->height/2, hr-s);
-		nvgStrokeWidth(vg, w->style.borderSize);
-		nvgStrokeColor(vg, nvgCol(w->style.borderColor));
-		nvgStroke(vg);
-	}
+	drawRect(x-hr, w->y + w->height/2 - hr, hr*2, hr*2, &handleStyle);
 }
 
 static void sliderLogic(void* uptr, struct MGwidget* w, int event, struct MGhit* hit)
 {
-	struct MGsliderState* inval = (struct MGsliderState*)w->uptr;
-	struct MGsliderState* state = NULL;
+	struct MGsliderState* val;
+	struct MGsliderState* state;
 	float hr, xmin, xmax, xrange;
 
-	if (inval == NULL) return;
+	(void)uptr;
+
+	if (!mgGetValueBlock(w->id, (void**)&val, NULL)) return;
 
 	hr = maxf(2.0f, w->height - w->style.paddingy*2) / 2.0f;
 
@@ -2849,65 +3091,48 @@ static void sliderLogic(void* uptr, struct MGwidget* w, int event, struct MGhit*
 	xrange = maxf(1.0f, xmax - xmin);
 
 	if (event == MG_PRESSED) {
-		state = (struct MGsliderState*)allocState(w->id, 0, sizeof(struct MGsliderState));
-		if (state == NULL) return;
-		*state = *inval;
+		if (!mgAllocStateBlock(w->id, 0, (void**)&state, sizeof(struct MGsliderState))) return;
+		// Capture the state of the slider when pressed.
+		memcpy(state, val, sizeof(struct MGsliderState));
 		float u = (state->value - state->vmin) / (state->vmax - state->vmin);
 		float x = xmin + u * (xmax - xmin);
 		if (hit->mx < (x-hr) || hit->mx > (x+hr)) {
 			// If hit outside the handle, skip there directly.
 			float v = clampf((hit->mx - xmin) / xrange, 0.0f, 1.0f);
 			state->value = clampf(state->vmin + v * (state->vmax - state->vmin), state->vmin, state->vmax);
+			mgSetResultFloat(w->id, state->value);
 		}
 		state->vstart = state->value;
 	}
 	if (event == MG_DRAGGED) {
-		state = (struct MGsliderState*)findState(w->id, 0, sizeof(struct MGsliderState));
-		if (state == NULL) return;
+		if (!mgGetStateBlock(w->id, 0, (void**)&state, NULL)) return;
 		float delta = (hit->deltamx / xrange) * (state->vmax - state->vmin);
 		state->value = clampf(state->vstart + delta, state->vmin, state->vmax);
 		mgSetResultFloat(w->id, state->value);
 	}
 	if (event == MG_RELEASED) {
-		freeState(w->id, 0);
+		// Release captured state when mouse is released.
+		mgFreeStateBlock(w->id, 0);
 	}
 }
 
-
 unsigned int mgSlider(float* value, float vmin, float vmax, struct MGopt* opts)
 {
-	struct MGsliderState* inval = NULL;
-	float* res = NULL;
+	struct MGsliderState val;
+	float w, h;
 	unsigned int canvas;
 
 	opts = mgOpts(mgLogic(MG_DRAG), mgTag("slider-canvas"), opts);
+	canvas = mgCanvas(DEFAULT_SLIDERW, SLIDER_HANDLE, sliderLogic, sliderDraw, opts);
 
-	inval = (struct MGsliderState*)allocInputTemp(sizeof(struct MGsliderState));
-	if (inval != NULL) {
-		inval->value = *value;
-		inval->vmin = vmin;
-		inval->vmax = vmax;
-	}
-	canvas = mgCanvas(DEFAULT_SLIDERW, SLIDER_HANDLE, sliderLogic, sliderDraw, inval, opts);
+	// Pass values to logid and rendering.
+	val.value = *value;
+	val.vmin = vmin;
+	val.vmax = vmax;
+	mgSetValueBlock(canvas, (void**)&val, sizeof(struct MGsliderState));
 
-	res = mgGetResultFloat(canvas);
-	if (res != NULL) {
-		*value = *res;
-	}
-
-/*	input = (struct MGsliderState*)allocState(canvas, 0, sizeof(struct MGsliderState));
-	if (input != NULL) {
-		unsigned char s = getState2(canvas);
-		input->value = *value;
-		input->vmin = vmin;
-		input->vmax = vmax;
-	}
-
-	res = hitResult2(canvas);
-	if (res != NULL) {
-		struct MGsliderState* output = (struct MGsliderState*)res->storage;
-		*value = output->value;
-	}*/
+	// Get results
+	mgGetResultFloat(canvas, value);
 
 	return canvas;
 }
@@ -2915,11 +3140,8 @@ unsigned int mgSlider(float* value, float vmin, float vmax, struct MGopt* opts)
 
 unsigned int mgSlider2(float* value, float vmin, float vmax, struct MGopt* opts)
 {
-	struct MGhit* res = NULL;
-	struct MGhit* hres = NULL;
 	float pc = (*value - vmin) / (vmax - vmin);
-	struct MGopt* hopts;	
-	struct MGstyle hstyle;
+	struct MGsliderState* state;
 	unsigned int slider, handle;
 
 	slider = mgBoxBegin(MG_ROW, mgOpts(mgLogic(MG_DRAG), mgWidth(DEFAULT_SLIDERW), mgHeight(SLIDER_HANDLE+1), mgTag("slider"), opts));
@@ -2927,21 +3149,56 @@ unsigned int mgSlider2(float* value, float vmin, float vmax, struct MGopt* opts)
 		mgBox(mgOpts(mgPropPosition(MG_JUSTIFY,MG_CENTER,0,0.5f), mgTag("slot"), mgPropWidth(1.0f)));
 		// Bar
 		mgBox(mgOpts(mgPropPosition(MG_START,MG_CENTER,0,0.5f), mgAlign(MG_CENTER), mgOverflow(MG_VISIBLE), mgTag("bar"), mgPropWidth(pc)));
-
-//		hopts = mgOpts(mgLogic(MG_DRAG), mgPropPosition(MG_JUSTIFY,MG_CENTER,pc,0.5f), mgTag("handle"));
-//		hstyle = computeStyle(MG_NORMAL, hopts);
-//		hres = mgIcon("handle", hopts);
 		// Handle
-//		handle = mgBox(mgOpts(mgLogic(MG_DRAG), mgPropPosition(MG_JUSTIFY,MG_CENTER,pc,0.5f), mgTag("handle")));
-//				mgIcon(icon, mgOpts());
-
-		handle = mgIcon("check", mgOpts(mgLogic(MG_DRAG), mgPropPosition(MG_JUSTIFY,MG_CENTER,pc,0.5f), mgTag("handle")));
+		handle = mgBox(mgOpts(mgLogic(MG_DRAG), mgPropPosition(MG_JUSTIFY,MG_CENTER,pc,0.5f), mgTag("handle")));
+//		handle = mgIcon("check", mgOpts(mgLogic(MG_DRAG), mgPropPosition(MG_JUSTIFY,MG_CENTER,pc,0.5f), mgTag("handle")));
 	mgBoxEnd();
 
-	hres = hitResult2(handle);
-	res = hitResult2(slider);
+	// Handle handle
+	if (mgPressed(handle)) {
+		if (mgAllocStateBlock(handle, 0, (void**)&state, sizeof(struct MGsliderState))) {
+			state->value = *value;
+		}
+	}
+	if (mgDragged(handle)) {
+		struct MGhit* hit = NULL;
+		if (mgGetHit(handle, &hit) && mgGetStateBlock(handle, 0, (void**)&state, NULL)) {
+			float xmin = hit->view.x + (SLIDER_HANDLE+1)/2;
+			float xmax = hit->view.x + hit->view.width - (SLIDER_HANDLE+1)/2;
+			float xrange = maxf(1.0f, xmax - xmin);
+			float delta = (hit->deltamx / xrange) * (vmax - vmin);
+			*value = clampf(state->value + delta, vmin, vmax);
+		}
+	}
+	if (mgReleased(handle)) {
+		mgFreeStateBlock(handle, 0);
+	}
 
-	// TODO: reconsider pbounds.
+	// Handle interacting with the background.
+	if (mgPressed(slider)) {
+		struct MGhit* hit = NULL;
+		if (mgGetHit(slider, &hit) && mgAllocStateBlock(slider, 0, (void**)&state, sizeof(struct MGsliderState))) {
+			float xmin = hit->rect.x + (SLIDER_HANDLE+1)/2;
+			float xmax = hit->rect.x + hit->rect.width - (SLIDER_HANDLE+1)/2;
+			float xrange = maxf(1.0f, xmax - xmin);
+			float v = clampf((hit->mx - xmin) / xrange, 0.0f, 1.0f);
+			*value = clampf(vmin + v * (vmax - vmin), vmin, vmax);
+			state->value = *value;
+		}
+	}
+	if (mgDragged(slider)) {
+		struct MGhit* hit = NULL;
+		if (mgGetHit(slider, &hit) && mgGetStateBlock(slider, 0, (void**)&state, NULL)) {
+			float xmin = hit->rect.x + (SLIDER_HANDLE+1)/2;
+			float xmax = hit->rect.x + hit->rect.width - (SLIDER_HANDLE+1)/2;
+			float xrange = maxf(1.0f, xmax - xmin);
+			float delta = (hit->deltamx / xrange) * (vmax - vmin);
+			*value = clampf(state->value + delta, vmin, vmax);
+		}
+	}
+	if (mgReleased(slider)) {
+		mgFreeStateBlock(slider, 0);
+	}
 
 /*	if (hres != NULL) {
 		struct MGsliderState* state = (struct MGsliderState*)hres->storage;
@@ -3046,88 +3303,52 @@ unsigned int mgScrollBar(float* offset, float contentSize, float viewSize, struc
 struct MGtextInputState {
 	int maxText;
 	int caretPos;
-	int npos;
-	int counter;
-	struct NVGglyphPosition* pos;
-	char* text;
-};
-
-static struct MGtextInputState* allocStateInput(struct MGwidget* w, int maxText)
-{
-	struct MGtextInputState* input = (struct MGtextInputState*)allocState(w->id, 0, sizeof(struct MGtextInputState));
-	if (input == NULL) return NULL;
-	input->pos = (struct NVGglyphPosition*)allocState(w->id, 1, sizeof(struct NVGglyphPosition)*maxText);
-	if (input->pos == NULL) return NULL;
-	input->text = (char*)allocState(w->id, 2, maxText);
-	if (input->text == NULL) return NULL;
-	return input;
-}
-
-static struct MGtextInputState* findStateInput(struct MGwidget* w)
-{
-	struct MGtextInputState* input = (struct MGtextInputState*)findState(w->id, 0, sizeof(struct MGtextInputState));
-	if (input == NULL) return NULL;
-	input->pos = (struct NVGglyphPosition*)findState(w->id, 1, sizeof(struct NVGglyphPosition)*input->maxText);
-	if (input->pos == NULL) return NULL;
-	input->text = (char*)findState(w->id, 2, input->maxText);
-	if (input->text == NULL) return NULL;
-	return input;
-}
-
-static void freeStateInput(struct MGwidget* w)
-{
-	freeState(w->id, 0);
-	freeState(w->id, 1);
-	freeState(w->id, 2);
-}
-
-struct MGinputState2
-{
-	char* text;
-	int maxText;
+	int nglyphs;
 };
 
 static void inputDraw(void* uptr, struct MGwidget* w, struct NVGcontext* vg, const float* view)
 {
-	struct MGinputState2* inval = (struct MGinputState2*)uptr;
-	struct MGtextInputState* state = NULL;
-	char* text;
-	int j;
+	(void)uptr;
 
-	drawRect(w);
+	drawRect(w->x, w->y, w->width, w->height, &w->style);
 //	if (debug) drawDebugRect(w);
-
-	if (inval == NULL) return;
 
 	nvgScissor(vg, (int)view[0], (int)view[1], (int)view[2], (int)view[3]);
 
-	state = findStateInput(w);
-	if (state != NULL) {
-		if (state->text != NULL)
-			drawText(w, state->text);
+	if (mgFocus(w->id)) {
+		int j;
+		float caretx = 0;
+		struct MGtextInputState* state = NULL;
+		char* stateText = NULL;
+		struct NVGglyphPosition* stateGlyphs = NULL;
+		if (!mgGetStateBlock(w->id, 0, (void**)&state, NULL)) return;
+		if (!mgGetStateBlock(w->id, 1, (void**)&stateText, NULL)) return;
+		if (!mgGetStateBlock(w->id, 2, (void**)&stateGlyphs, NULL)) return;
+
+		drawText(w, stateText);
 //							printf("input  max=%d i='%s' w='%s' pos=%p npos=%d\n", input->maxText, input->buf, w->text, input->pos, input->npos);
 		nvgFillColor(vg, nvgRGBA(255,0,0,64));
-		for (j = 0; j < state->npos; j++) {
-			struct NVGglyphPosition* p = &state->pos[j];
+		for (j = 0; j < state->nglyphs; j++) {
+			struct NVGglyphPosition* p = &stateGlyphs[j];
 			nvgBeginPath(vg);
 			nvgRect(vg, p->minx, w->y, p->maxx - p->minx, w->height);
 			nvgFill(vg);
 		}
 
-		if (state->pos != NULL) {
-			float caretx = 0;
-			if (state->caretPos >= state->npos)
-				caretx = state->pos[state->npos-1].maxx;
-			else
-				caretx = state->pos[state->caretPos].x;
-			nvgFillColor(vg, nvgRGBA(255,0,0,255));
-			nvgBeginPath(vg);
-			nvgRect(vg, (int)(caretx-0.5f), w->y, 1, w->height);
-			nvgFill(vg);
-		}
+		if (state->caretPos >= state->nglyphs)
+			caretx = stateGlyphs[state->nglyphs-1].maxx;
+		else
+			caretx = stateGlyphs[state->caretPos].x;
+		nvgFillColor(vg, nvgRGBA(255,0,0,255));
+		nvgBeginPath(vg);
+		nvgRect(vg, (int)(caretx-0.5f), w->y, 1, w->height);
+		nvgFill(vg);
+
 	} else {
-		if (inval->text != NULL)
-			drawText(w, inval->text);
+		char* text = NULL;
+		int maxText = 0;
+		if (!mgGetValueStr(w->id, &text, &maxText)) return;
+		drawText(w, text);
 	}
 }
 
@@ -3166,37 +3387,40 @@ static void insertText(char* dst, int ndst, int idx, char* str, int nstr)
 
 static void inputLogic(void* uptr, struct MGwidget* w, int event, struct MGhit* hit)
 {
-	struct MGinputState2* inval = (struct MGinputState2*)uptr;
 	struct MGtextInputState* state = NULL;
+	char* stateText = NULL;
+	struct NVGglyphPosition* stateGlyphs = NULL;
+	char* text = NULL;
+	int maxText = 0;
 
-	if (inval == NULL) return;
-
-	state = findStateInput(w);
+	if (!mgGetValueStr(w->id, &text, &maxText)) return;
 
 	if (event == MG_FOCUSED) {
-		state = (struct MGtextInputState*)allocStateInput(w, inval->maxText);
-		if (state == NULL) return;
-		if (inval->text != NULL)
-			memcpy(state->text, inval->text, inval->maxText);
-		else
-			memset(state->text, 0, inval->maxText);
-		state->maxText = inval->maxText;
-		state->npos = measureTextGlyphs(w, state->text, state->pos, state->maxText);
+		if (!mgAllocStateBlock(w->id, 0, (void**)&state, sizeof(struct MGtextInputState))) return;
+		if (!mgAllocStateBlock(w->id, 1, (void**)&stateText, maxText)) return;
+		if (!mgAllocStateBlock(w->id, 2, (void**)&stateGlyphs, sizeof(struct NVGglyphPosition)*maxText)) return;
+		memcpy(stateText, text, maxText);
+		state->maxText = maxText;
+		state->nglyphs = measureTextGlyphs(w, stateText, stateGlyphs, maxText);
 		state->caretPos = 0;
 		printf("%d focused\n", w->id);
 	}
 	if (event == MG_BLURRED) {
-		freeStateInput(w);
-		state = NULL;
+		mgFreeStateBlock(w->id, 0);
+		mgFreeStateBlock(w->id, 1);
+		mgFreeStateBlock(w->id, 2);
 		printf("%d blurred\n", w->id);
 	}
+
+	if (!mgGetStateBlock(w->id, 0, (void**)&state, NULL)) return;
+	if (!mgGetStateBlock(w->id, 1, (void**)&stateText, NULL)) return;
+	if (!mgGetStateBlock(w->id, 2, (void**)&stateGlyphs, NULL)) return;
+
 	if (event == MG_PRESSED) {
-		if (state == NULL) return;
-		state->caretPos = findCaretPos(hit->mx, state->pos, state->npos);
+		state->caretPos = findCaretPos(hit->mx, stateGlyphs, state->nglyphs);
 	}
 	if (event == MG_DRAGGED) {
-		if (state == NULL) return;
-		state->caretPos = findCaretPos(hit->mx, state->pos, state->npos);
+		state->caretPos = findCaretPos(hit->mx, stateGlyphs, state->nglyphs);
 	}
 	if (event == MG_KEYPRESSED) {
 		printf("%d pressed: %d\n", w->id, hit->code);
@@ -3206,22 +3430,13 @@ static void inputLogic(void* uptr, struct MGwidget* w, int event, struct MGhit* 
 	}
 	if (event == MG_CHARTYPED) {
 		char str[8];
-		struct MGinputState2* outval;
-		if (state == NULL) return;
 		// Append
 		cpToUTF8(hit->code, str);
-		insertText(state->text, state->maxText, strlen(state->text), str, strlen(str));
+		insertText(stateText, state->maxText, strlen(stateText), str, strlen(str));
 		// Store result
-		outval = (struct MGinputState2*)allocOutputTemp(sizeof(struct MGinputState2));
-		if (outval != NULL) {
-			outval->text = (char*)allocOutputTemp(state->maxText);
-			if (outval->text != NULL) {
-				outval->maxText = state->maxText;
-				memcpy(outval->text, state->text, state->maxText);
-				mgSetResultPtr(w->id, outval);
-			}
-		}
+		mgSetResultStr(w->id, stateText, state->maxText);
 	}
+
 
 /*	switch (event) {
 	case MG_FOCUSED:	printf("%08x focused\n", w->id); break;
@@ -3237,16 +3452,18 @@ static void inputLogic(void* uptr, struct MGwidget* w, int event, struct MGhit* 
 
 unsigned int mgInput(char* text, int maxText, struct MGopt* opts)
 {
-//	struct MGhit* res = NULL;
 	float th;
-	struct MGinputState2* res = NULL;
+	char* res = NULL;
+	int resSize = 0;
 	struct MGinputState2* state = NULL;
 	struct MGwidget* parent = getParent();
 	struct MGwidget* w = allocWidget(MG_INPUT);
 	if (parent != NULL)
 		addChildren(parent, w);
 
-	w->style = computeStyle(getState(w), mgOpts(mgTag("input"), opts), NULL);
+	opts = mgOpts(mgTag("input"), opts);
+	w->tag = getTag(opts);
+	w->style = computeStyle2(w, getState(w), opts, NULL);
 
 	textSize(NULL, w->style.fontSize, NULL, &th);
 	w->cwidth = DEFAULT_TEXTW;
@@ -3256,44 +3473,12 @@ unsigned int mgInput(char* text, int maxText, struct MGopt* opts)
 	w->render = inputDraw;
 	w->logic = inputLogic;
 
-	state = (struct MGinputState2*)allocInputTemp(sizeof(struct MGinputState2));
-	if (state != NULL) {
-		memset(state, 0, sizeof(struct MGinputState2));
-		state->text = (char*)allocInputTemp(maxText);
-		if (state->text != NULL) {
-			state->maxText = maxText;
-			memcpy(state->text, text, maxText);
-		}
+	mgSetValueStr(w->id, text, maxText);
+
+	if (mgGetResultStr(w->id, &res, &resSize)) {
+		printf("res='%s'\n", res);
+		memcpy(text, res, mini(maxText, resSize));
 	}
-	w->uptr = state;
-
-	res = mgGetResultPtr(w->id);
-	if (res != NULL) {
-		printf("res='%s'\n", res->text);
-		memcpy(text, res->text, mini(maxText, res->maxText));
-	}
-
-/*	res = hitResult(w);
-	if (getState(w) & MG_FOCUS) {
-		struct MGinputState* input = allocStateInput(w, maxi(20, maxText));
-		if (input == NULL) return res;
-
-		if (input->maxText == 0) {
-			// The state is not set up yet.
-			memcpy(input->buf, text, maxText);
-			input->maxText = maxText;
-			input->caretPos = 0;
-		}
-		w->text = input->buf;
-
-//		input->counter++;
-//		snprintf(input->buf, input->maxText, "Count %d", input->counter);
-
-		w->uptr = input;
-
-	} else {*/
-//		w->text = allocTextLen(text, maxText);
-//	}
 
 	return w->id;
 }
@@ -3412,7 +3597,7 @@ unsigned int mgPopupBegin(unsigned int target, int trigger, int dir, struct MGop
 	w = allocWidget(MG_BOX);
 	w->parent = tgt;
 
-	popup = (struct MGpopupState*)allocState(w->id, 0, sizeof(struct MGpopupState));
+/*	popup = (struct MGpopupState*)allocState(w->id, 0, sizeof(struct MGpopupState));
 	if (popup != NULL) {
 //		if (hit != NULL) {
 //			if (hit->clicked) {
@@ -3467,14 +3652,15 @@ unsigned int mgPopupBegin(unsigned int target, int trigger, int dir, struct MGop
 		show = popup->show;
 		w->x = popup->x;
 		w->y = popup->y;
-	}
+	}*/
 
 	opts = mgOpts(mgTag("popup"), opts);
 
 	w->active = show;
 	w->bubble = 0;
 	w->dir = dir;
-	w->style = computeStyle(getState(w), opts, NULL);
+	w->tag = getTag(opts);
+	w->style = computeStyle2(w, getState(w), opts, NULL);
 
 	pushBox(w);
 	pushTag(getTag(opts));
@@ -3491,7 +3677,7 @@ unsigned int mgPopupEnd()
 	popTag();
 	w = popBox();
 	if (w != NULL) {
-		struct MGpopupState* popup = (struct MGpopupState*)allocState(w->id, 0, sizeof(struct MGpopupState));
+/*		struct MGpopupState* popup = (struct MGpopupState*)allocState(w->id, 0, sizeof(struct MGpopupState));
 		if (popup != NULL) {
 			if (popup->show) {
 				if (popup->trigger == MG_HOVER) {
@@ -3502,7 +3688,7 @@ unsigned int mgPopupEnd()
 			}
 		}
 		layoutPanel(w);
-		return w->id;
+		return w->id;*/
 	}
 
 	return 0;
@@ -3518,6 +3704,11 @@ int mgPressed(unsigned int id)
 	return context.pressed == id ? 1 : 0;
 }
 
+int mgDragged(unsigned int id)
+{
+	return context.dragged == id ? 1 : 0;
+}
+
 int mgReleased(unsigned int id)
 {
 	return context.released == id ? 1 : 0;
@@ -3531,4 +3722,9 @@ int mgActive(unsigned int id)
 int mgHover(unsigned int id)
 {
 	return context.hover == id ? 1 : 0;
+}
+
+int mgFocus(unsigned int id)
+{
+	return context.focus == id ? 1 : 0;
 }

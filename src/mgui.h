@@ -140,7 +140,6 @@ struct MGstyle {
 	float lineHeight;
 
 	unsigned char logic;
-
 	unsigned char anchor;
 };
 
@@ -154,12 +153,20 @@ struct MGopt* mgPackOptStr(unsigned char arg, const char* str);
 unsigned int mgRGBA(unsigned char r, unsigned char g, unsigned char b, unsigned char a);
 unsigned int mgCreateStyle(const char* selector, struct MGopt* normal, struct MGopt* hover, struct MGopt* active, struct MGopt* focus);
 
+struct MGrect {
+	float x, y, width, height;
+};
+
 struct MGhit {
 	float mx, my;
 	float deltamx, deltamy;
 	float localmx, localmy;
 	unsigned int code;
 	unsigned char storage[128];
+
+	struct MGrect rect;
+	struct MGrect view;
+	struct MGstyle style;
 };
 
 enum MGwidgetType {
@@ -197,10 +204,6 @@ struct MGwidget;
 typedef void (*MGcanvasRenderFun)(void* uptr, struct MGwidget* w, struct NVGcontext* vg, const float* view);
 typedef void (*MGcanvasLogicFun)(void* uptr, struct MGwidget* w, int event, struct MGhit* hit);
 
-struct MGrect {
-	float x, y, width, height;
-};
-
 struct MGwidget {
 	unsigned int id;
 	float x, y, width, height;
@@ -228,6 +231,9 @@ struct MGwidget {
 	MGcanvasLogicFun logic;
 	MGcanvasRenderFun render;
 	void* uptr;
+	int uptrsize;
+
+	const char* tag;
 
 	struct MGwidget* next;
 	struct MGwidget* parent;
@@ -262,7 +268,7 @@ unsigned int mgParagraph(const char* text, struct MGopt* opts);
 unsigned int mgIcon(const char* name, struct MGopt* opts);
 unsigned int mgInput(char* text, int maxtext, struct MGopt* opts);
 
-unsigned int mgCanvas(float width, float height, MGcanvasLogicFun logic, MGcanvasRenderFun render, void* uptr, struct MGopt* opts);
+unsigned int mgCanvas(float width, float height, MGcanvasLogicFun logic, MGcanvasRenderFun render, struct MGopt* opts);
 
 // Derivative
 unsigned int mgNumber(float* value, struct MGopt* opts);
@@ -283,8 +289,15 @@ unsigned int mgPopupEnd();
 
 int mgClicked(unsigned int id);
 int mgPressed(unsigned int id);
+int mgDragged(unsigned int id);
 int mgReleased(unsigned int id);
+int mgBlurred(unsigned int id);
+int mgFocused(unsigned int id);
+int mgExited(unsigned int id);
+int mgEntered(unsigned int id);
+
 int mgActive(unsigned int id);
 int mgHover(unsigned int id);
+int mgFocus(unsigned int id);
 
 #endif // MGUI_H
