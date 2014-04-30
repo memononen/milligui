@@ -287,6 +287,8 @@ unsigned int mgScrollBar(float* offset, float contentSize, float viewSize, struc
 unsigned int mgPopupBegin(unsigned int target, int trigger, int dir, struct MGopt* opts);
 unsigned int mgPopupEnd();
 
+unsigned int mgTooltip(unsigned int target, const char* message, struct MGopt* opts);
+
 int mgClicked(unsigned int id);
 int mgPressed(unsigned int id);
 int mgDragged(unsigned int id);

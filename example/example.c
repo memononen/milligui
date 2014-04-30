@@ -377,6 +377,7 @@ int main()
 		if (mgClicked(build)) {
 			printf("Build!!\n");
 		}
+		mgTooltip(build, "Press Build to build.", mgOpts());
 
 		mgBoxBegin(MG_ROW, mgOpts());
 			mgBoxBegin(MG_COL, mgOpts(mgGrow(1), mgSpacing(5), mgAlign(MG_JUSTIFY)));
