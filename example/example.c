@@ -232,6 +232,18 @@ int main()
 		mgFillColor(255,255,255,32)
 	), mgOpts(), mgOpts(), mgOpts());
 
+	mgCreateStyle("menu1", mgOpts(
+		mgAlign(MG_JUSTIFY),
+		mgPropPosition(MG_START,MG_START,0.0f,1.0f),
+		mgFillColor(255,255,255,120)
+	), mgOpts(), mgOpts(), mgOpts());
+
+	mgCreateStyle("menu2", mgOpts(
+		mgAlign(MG_JUSTIFY),
+		mgPropPosition(MG_START,MG_START,1.0f,0.0f),
+		mgFillColor(255,255,255,120)
+	), mgOpts(), mgOpts(), mgOpts());
+
 	mgCreateStyle("dialog", mgOpts(
 		mgFillColor(255,255,255,32),
 		mgCornerRadius(4)
@@ -292,12 +304,66 @@ int main()
 		input.nkeys = 0;
 		input.mbut = 0;
 
+
+/*
+
+- logic
+
+	- popover / lightbox
+		- click to activate
+		- click outside to close (or close with button)		
+
+	- menu / popup
+		- press to activate
+		- if keep pressing, click in release
+		- click outside to close (or close with button)
+
+	- sub menu
+		- hover + wait to activate
+		- click outside to close (or close with button)
+		- hover outside the hierarchy to close 
+
+	- tooltip
+		- hover + wait to activate
+		- exit to close
+
+
+but = mgButton("Popover", mgOpt());
+if (mgLogic(but, MG_TOGGLE, MG_CLICKED, MG_MODAL)) {
+	mgBeginPopup(but, MG_COL, mgOpt());
+		if (mgButton("Press", mgOpt())) {
+			mgCloseLogic(but);
+		}
+	mgEndPopup();
+}
+
+
+but = mgButton("Menu", mgOpt());
+if (mgLogic(but, MG_MENU, MG_PRESSED, MG_CLICKTHROUGH)) {
+	mgBeginPopup(but, MG_COL, mgOpt());
+		if (mgButton("Press", mgOpt())) {
+			mgCloseLogic(but);
+		}
+	mgEndPopup();
+}
+
+
+but = mgButton("Tooltip", mgOpt());
+if (mgLogic(but, MG_WAIT, MG_HOVERED, 0)) {
+	mgBeginPopup(but, MG_COL, mgOpt());
+		mgLabel("Tipping tools.", mgOpt());
+	mgEndPopup();
+}
+
+*/
+
+
 		// Menu bar
 //		mgBeginPanel("Menu", 0,0, winWidth, 30, MG_ROW, MG_JUSTIFY, 0, 0,0);
 
 		mgPanelBegin(MG_ROW, 0,0, 0, mgOpts(mgWidth(winWidth), mgHeight(30), mgTag("menubar"), mgAlign(MG_JUSTIFY)));
 			file = mgItem("File", mgOpts());
-			mgPopupBegin(file, MG_HOVER, MG_COL, mgOpts(mgAlign(MG_JUSTIFY)));
+			mgPopupBegin(file, MG_HOVER, MG_COL, mgOpts(mgTag("menu1")));
 				fileOpen = mgItem("Open...", mgOpts());
 				mgItem("Save", mgOpts());
 				mgItem("Save As...", mgOpts());
@@ -305,7 +371,7 @@ int main()
 			mgPopupEnd();
 
 			edit = mgItem("Edit", mgOpts());
-			mgPopupBegin(edit, MG_HOVER, MG_COL, mgOpts(mgAlign(MG_JUSTIFY)));
+			mgPopupBegin(edit, MG_HOVER, MG_COL, mgOpts(mgTag("menu1")));
 				mgItem("Undo", mgOpts());
 				mgItem("Redo", mgOpts());
 				mgItem("Cut", mgOpts());
@@ -314,11 +380,11 @@ int main()
 			mgPopupEnd();
 
 			tools = mgItem("Tools", mgOpts());
-			mgPopupBegin(tools, MG_HOVER, MG_COL, mgOpts(mgAlign(MG_JUSTIFY)));
+			mgPopupBegin(tools, MG_HOVER, MG_COL, mgOpts(mgTag("menu1")));
 				mgItem("Build", mgOpts());
 				mgItem("Clear", mgOpts());
 				toolsAlign = mgItem("Align", mgOpts());
-				mgPopupBegin(toolsAlign, MG_HOVER, MG_COL, mgOpts(mgAlign(MG_JUSTIFY)));
+				mgPopupBegin(toolsAlign, MG_HOVER, MG_COL, mgOpts(mgTag("menu2")));
 					mgItem("Left", mgOpts());
 					mgItem("Center", mgOpts());
 					mgItem("Right", mgOpts());
@@ -326,7 +392,7 @@ int main()
 			mgPopupEnd();
 
 			view = mgItem("View", mgOpts());
-			mgPopupBegin(view, MG_HOVER, MG_COL, mgOpts(mgAlign(MG_JUSTIFY)));
+			mgPopupBegin(view, MG_HOVER, MG_COL, mgOpts(mgTag("menu1")));
 				mgItem("Sidebar", mgOpts());
 				mgItem("Minimap", mgOpts());
 				mgItem("Tabs", mgOpts());

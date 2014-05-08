@@ -598,7 +598,7 @@ static void addChildren(struct MGwidget* parent, struct MGwidget* w)
 {
 	struct MGwidget** prev = NULL;
 	if (parent == NULL) return;
-	prev = &parent->box.children;
+	prev = &parent->children;
 	while (*prev != NULL)
 		prev = &(*prev)->next;
 	*prev = w;
@@ -1193,7 +1193,7 @@ int mgInit()
 	mgCreateStyle("tooltip",
 		// Normal
 		mgOpts(
-			mgPropPosition(MG_START,MG_CENTER,1.0f,0.5f),
+			mgPropPosition(MG_CENTER,MG_END,0.5f,0.0f),
 			mgLogic(MG_CLICK),
 			mgFillColor(32,32,32,220),
 			mgPadding(5,5)
@@ -1303,7 +1303,7 @@ static struct MGwidget* hitTest(struct MGwidget* box, const float* bounds)
 	if (box->style.logic != 0 && inRect(bbounds[0], bbounds[1], bbounds[2], bbounds[3]))
 		hit = box;
 
-	for (w = box->box.children; w != NULL; w = w->next) {
+	for (w = box->children; w != NULL; w = w->next) {
 
 		if (!visible(bbounds, w->x, w->y, w->width, w->height))
 			continue;
@@ -1321,6 +1321,8 @@ static struct MGwidget* hitTest(struct MGwidget* box, const float* bounds)
 
 		switch (w->type) {
 		case MG_BOX:
+		case MG_POPUP:
+		case MG_PANEL:
 			child = hitTest(w, bbounds);
 			if (child != NULL)
 				hit = child;
@@ -1356,7 +1358,7 @@ static struct MGwidget* updateState(struct MGwidget* box, unsigned int hover, un
 		ret = box;
 	}
 
-	for (w = box->box.children; w != NULL; w = w->next) {
+	for (w = box->children; w != NULL; w = w->next) {
 		w->state = box->state;
 		if (w->id == hover)
 			w->state |= MG_HOVER;
@@ -1383,7 +1385,7 @@ static void dumpId(struct MGwidget* box, int indent)
 {
 	struct MGwidget* w = NULL;
 	printf("%*sbox %d\n", indent, "", box->id);
-	for (w = box->box.children; w != NULL; w = w->next) {
+	for (w = box->children; w != NULL; w = w->next) {
 		if  (w->type == MG_BOX)
 			dumpId(w, indent+2);
 		else
@@ -1809,7 +1811,7 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 		return;
 
 	for (i = 0; i < 2; i++) {
-		for (w = box->box.children; w != NULL; w = w->next) {
+		for (w = box->children; w != NULL; w = w->next) {
 			unsigned char anchor = isStyleSet(&w->style, MG_ANCHOR_ARG);
 			// draw anchored last
 			if ((i == 0 && anchor) || (i == 1 && !anchor))
@@ -1822,6 +1824,8 @@ static void drawBox(struct MGwidget* box, const float* bounds)
 
 			switch (w->type) {
 			case MG_BOX:
+			case MG_PANEL:
+			case MG_POPUP:
 				drawBox(w, bbounds);
 				break;
 
@@ -1972,13 +1976,11 @@ static float calcPosDelta(unsigned char align, float x, float psize, float wsize
 
 static void offsetWidget(struct MGwidget* w, float dx, float dy)
 {
+	struct MGwidget* c = NULL;
 	w->x += dx;
 	w->y += dy;
-	if  (w->type == MG_BOX) {
-		struct MGwidget* c = NULL;
-		for (c = w->box.children; c != NULL; c = c->next)
-			offsetWidget(c, dx, dy);
-	}
+	for (c = w->children; c != NULL; c = c->next)
+		offsetWidget(c, dx, dy);
 } 
 
 static void offsetPopups()
@@ -1988,7 +1990,8 @@ static void offsetPopups()
 	for (i = 0; i < context.panelCount; i++) {
 		struct MGwidget* w = context.panels[i];
 		if (!w->active) continue;
-		if (w->parent) {
+
+		if (w->type == MG_POPUP) {
 			struct MGwidget* root = w->parent;
 			float dx = w->parent->x + root->width;
 			float dy = w->parent->y; // + w->parent->height;
@@ -2092,7 +2095,7 @@ static void fitToContent(struct MGwidget* root)
 	float width = 0;
 	float height = 0;
 
-	for (w = root->box.children; w != NULL; w = w->next) {
+	for (w = root->children; w != NULL; w = w->next) {
 		if (isStyleSet(&w->style, MG_ANCHOR_ARG)) continue;
 		if (w->type == MG_BOX) {
 			fitToContent(w);
@@ -2101,14 +2104,14 @@ static void fitToContent(struct MGwidget* root)
 	}
 
 	if (root->dir == MG_COL) {
-		for (w = root->box.children; w != NULL; w = w->next) {
+		for (w = root->children; w != NULL; w = w->next) {
 			if (isStyleSet(&w->style, MG_ANCHOR_ARG)) continue;
 			width = maxf(width, w->cwidth + w->style.paddingx*2);
 			height += w->cheight + w->style.paddingy*2;
 			if (w->next != NULL) height += w->style.spacing;
 		}
 	} else {
-		for (w = root->box.children; w != NULL; w = w->next) {
+		for (w = root->children; w != NULL; w = w->next) {
 			if (isStyleSet(&w->style, MG_ANCHOR_ARG)) continue;
 			width += w->cwidth + w->style.paddingx*2;
 			height = maxf(height, w->cheight + w->style.paddingy*2);
@@ -2145,7 +2148,7 @@ static int layoutWidgets(struct MGwidget* root)
 	}
 
 	// Calculate desired sizes of the boxes.
-	for (w = root->box.children; w != NULL; w = w->next) {
+	for (w = root->children; w != NULL; w = w->next) {
 
 		if (isStyleSet(&w->style, MG_PROPWIDTH_ARG)) {
 			w->width = clampf(maxf(0, rw - w->style.paddingx*2) * w->style.width + w->style.paddingx*2, 0, rw);
@@ -2177,7 +2180,7 @@ static int layoutWidgets(struct MGwidget* root)
 	}
 
 	// Reflow multi-line text if needed
-	for (w = root->box.children; w != NULL; w = w->next) {
+	for (w = root->children; w != NULL; w = w->next) {
 		float tw, th;
 		if (w->type != MG_PARAGRAPH) continue;
 		// Apply to columns only
@@ -2193,7 +2196,7 @@ static int layoutWidgets(struct MGwidget* root)
 	}
 
 	// Layout anchored widgets
-	for (w = root->box.children; w != NULL; w = w->next) {
+	for (w = root->children; w != NULL; w = w->next) {
 		if (isStyleSet(&w->style, MG_ANCHOR_ARG)) {
 			unsigned char ax = w->style.anchor & 0xf;
 			unsigned char ay = (w->style.anchor >> 4) & 0xf;
@@ -2217,7 +2220,7 @@ static int layoutWidgets(struct MGwidget* root)
 	if (root->dir == MG_COL) {
 		float packSpacing = 0;
 
-		for (w = root->box.children; w != NULL; w = w->next) {
+		for (w = root->children; w != NULL; w = w->next) {
 			if (isStyleSet(&w->style, MG_ANCHOR_ARG)) continue;
 			sum += w->height;
 			if (w->next != NULL) sum += w->style.spacing;
@@ -2243,7 +2246,7 @@ static int layoutWidgets(struct MGwidget* root)
 			avail = 0;
 		}
 
-		for (w = root->box.children; w != NULL; w = w->next) {
+		for (w = root->children; w != NULL; w = w->next) {
 			if (isStyleSet(&w->style, MG_ANCHOR_ARG)) continue;
 			w->x = x;
 			w->y = y;
@@ -2271,7 +2274,7 @@ static int layoutWidgets(struct MGwidget* root)
 	} else {
 		float packSpacing = 0;
 
-		for (w = root->box.children; w != NULL; w = w->next) {
+		for (w = root->children; w != NULL; w = w->next) {
 			if (isStyleSet(&w->style, MG_ANCHOR_ARG)) continue;
 			sum += w->width;
 			if (w->next != NULL) sum += w->style.spacing;
@@ -2297,7 +2300,7 @@ static int layoutWidgets(struct MGwidget* root)
 			avail = 0;
 		}
 
-		for (w = root->box.children; w != NULL; w = w->next) {
+		for (w = root->children; w != NULL; w = w->next) {
 			if (isStyleSet(&w->style, MG_ANCHOR_ARG)) continue;
 
 			w->x = x;
@@ -2640,16 +2643,14 @@ static unsigned char getState2(unsigned int id)
 
 static unsigned char getChildState(struct MGwidget* w)
 {
+	struct MGwidget* c;
 	unsigned char ret = MG_NORMAL;
 	if (w == NULL) return ret;
 	if (context.active == w->id) ret |= MG_ACTIVE;
 	if (context.hover == w->id) ret |= MG_HOVER;
 	if (context.focus == w->id) ret |= MG_FOCUS;
-	if (w->type == MG_BOX) {
-		struct MGwidget* c;
-		for (c = w->box.children; c != NULL; c = c->next)
-			ret |= getChildState(c);
-	}
+	for (c = w->children; c != NULL; c = c->next)
+		ret |= getChildState(c);
 	return ret;
 }
 
@@ -2888,7 +2889,7 @@ unsigned int mgPanelBegin(int dir, float x, float y, int zidx, struct MGopt* opt
 
 	opts = mgOpts(mgTag("panel"), opts);
 
-	w = allocWidget(MG_BOX);
+	w = allocWidget(MG_PANEL);
 	w->x = x;
 	w->y = y;
 	w->dir = dir;
@@ -3621,7 +3622,7 @@ unsigned int mgLabel(const char* text, struct MGopt* opts)
 unsigned int mgSelect(int* value, const char** choices, int nchoises, struct MGopt* opts)
 {
 	int i;
-	unsigned int button = 0;
+	unsigned int button = 0, popup = 0;
 
 	button = mgBoxBegin(MG_ROW, mgOpts(mgTag("select"), opts));
 		mgText(choices[*value], mgOpts(mgGrow(1)));
@@ -3630,11 +3631,17 @@ unsigned int mgSelect(int* value, const char** choices, int nchoises, struct MGo
 		mgIcon("arrow-combo", mgOpts(mgTag("arrow")));
 
 	mgBoxEnd();
-	mgPopupBegin(button, MG_ACTIVE, MG_COL, mgOpts(mgAlign(MG_JUSTIFY)));
-		for (i = 0; i < nchoises; i++) {
-			if (mgClicked(mgItem(choices[i], mgOpts())))
-				*value = i;
+
+//			mgPropPosition(MG_START,MG_CENTER,1.0f,0.5f),
+//	mgPropPosition(a,b,1,0)
+
+	popup = mgPopupBegin(button, MG_ACTIVE, MG_COL, mgOpts(mgAlign(MG_JUSTIFY), mgPropPosition(MG_START,MG_START,0.0f,1.0f)));
+	for (i = 0; i < nchoises; i++) {
+		if (mgClicked(mgItem(choices[i], mgOpts()))) {
+			mgShowPopup(popup, 0);
+			*value = i;
 		}
+	}
 	mgPopupEnd();
 
 	return button;
@@ -3648,6 +3655,7 @@ struct MGpopupState {
 	float x, y;
 
 	int trigger;
+
 	unsigned int target;
 
 	unsigned int parentPanel;
@@ -3659,6 +3667,42 @@ static struct MGwidget* getParentPanel(struct MGwidget* w)
 	while (w->parent != NULL)
 		w = w->parent;
 	return w;
+}
+
+static int isParentPanel(struct MGwidget* w, unsigned int id)
+{
+	if (w == NULL) return 0;
+	while (w->parent != NULL) {
+		w = w->parent;
+		if (w->id == id) return 1;
+	}
+	return 0;
+}
+
+static unsigned char getPanelChildState(unsigned int id)
+{
+	int i;
+	unsigned char state = 0;
+	for (i = 0; i < context.panelCount; i++) {
+		struct MGwidget* panel = context.panels[i];
+		if (isParentPanel(panel, id)) {
+			printf("panel %d is parent if %d\n", panel->id, id);
+			state |= getChildState(panel);
+		}
+	}
+	return state;
+}
+
+static int isAncestor(unsigned int pid, unsigned int cid)
+{
+	struct MGwidget* w = findWidget(cid);
+	if (w == NULL) return 0;
+	while (w->parent != NULL) {
+		if (w->id == pid)
+			return 1;
+		w = w->parent;
+	}
+	return 0;
 }
 
 unsigned int mgPopupBegin(unsigned int target, int trigger, int dir, struct MGopt* opts)
@@ -3673,8 +3717,8 @@ unsigned int mgPopupBegin(unsigned int target, int trigger, int dir, struct MGop
 
 	pushId(context.panelCount+1);
 
-	w = allocWidget(MG_BOX);
-//	w->parent = tgt;
+	w = allocWidget(MG_POPUP);
+	w->parent = tgt;
 
 	if (!mgAllocStateBlock(w->id, 0, (void**)&state, sizeof(struct MGpopupState))) return 0;
 	state->trigger = trigger;
@@ -3695,28 +3739,6 @@ unsigned int mgPopupBegin(unsigned int target, int trigger, int dir, struct MGop
 			}
 			state->acting = 0;
 		}
-	}
-	if (state->trigger == MG_HOVER) {
-		// Hide when on release of any other
-		if (getChildState(tgt) & MG_HOVER) {
-			if (state->counter < 2)
-				state->counter++;
-		} else {
-			if (state->counter > 0)
-				state->counter--;
-		}
-		state->show = state->counter == 2 ? 1 : 0;
-
-/*		if (context.entered != 0) {
-			if (context.entered == target) {
-				state->show = 1;
-			}
-		}
-		if (context.exited != 0) {
-			if (context.exited == target) {
-				state->show = 1;
-			}
-		}*/
 	}
 
 	state->x = 0;
@@ -3807,7 +3829,25 @@ unsigned int mgPopupEnd()
 	w = popBox();
 	if (w != NULL) {
 		struct MGpopupState* state = NULL;
+		struct MGwidget* tgt = NULL;
+
 		if (mgGetStateBlock(w->id, 0, (void**)&state, NULL)) {
+			tgt = findWidget(state->target);
+			if (tgt != NULL) {
+
+				if (state->trigger == MG_HOVER) {
+					if ((getChildState(tgt) & MG_HOVER) != 0) {
+						if (state->counter < 2)
+							state->counter++;
+					} else if (!isAncestor(w->id, context.hover)) {
+						if (state->counter > 0)
+							state->counter--;
+					}
+					state->show = state->counter == 2 ? 1 : 0;
+				}
+			}
+		}
+
 /*		struct MGpopupState* popup = (struct MGpopupState*)allocState(w->id, 0, sizeof(struct MGpopupState));
 		if (popup != NULL) {
 			if (popup->show) {
@@ -3818,12 +3858,21 @@ unsigned int mgPopupEnd()
 				}
 			}
 		}*/
-		}
+
 		layoutPanel(w);
 		return w->id;
 	}
 
 	return 0;
+}
+
+void mgShowPopup(unsigned int id, int show)
+{
+	struct MGpopupState* state = NULL;
+	struct MGwidget* w = findWidget(id);
+	if (w == NULL || w->type != MG_POPUP) return;
+	if (!mgGetStateBlock(id, 0, (void**)&state, NULL)) return;
+	state->show = show;
 }
 
 unsigned int mgTooltip(unsigned int target, const char* message, struct MGopt* opts)

@@ -171,6 +171,8 @@ struct MGhit {
 
 enum MGwidgetType {
 	MG_BOX,
+	MG_PANEL,
+	MG_POPUP,
 	MG_PARAGRAPH,
 	MG_TEXT,
 	MG_ICON,
@@ -223,9 +225,6 @@ struct MGwidget {
 			struct MGicon* icon;
 		} icon;
 		char* text;
-		struct {
-			struct MGwidget* children;
-		} box;
 	};
 
 	MGcanvasLogicFun logic;
@@ -237,6 +236,7 @@ struct MGwidget {
 
 	struct MGwidget* next;
 	struct MGwidget* parent;
+	struct MGwidget* children;
 };
 
 #define MG_MAX_INPUTKEYS 32
@@ -286,6 +286,7 @@ unsigned int mgScrollBar(float* offset, float contentSize, float viewSize, struc
 
 unsigned int mgPopupBegin(unsigned int target, int trigger, int dir, struct MGopt* opts);
 unsigned int mgPopupEnd();
+void mgShowPopup(unsigned int id, int show);
 
 unsigned int mgTooltip(unsigned int target, const char* message, struct MGopt* opts);
 
