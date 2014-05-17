@@ -4,7 +4,6 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <stdio.h>
-#define NANOSVG_IMPLEMENTATION 1
 #include "nanosvg.h"
 
 static int mini(int a, int b) { return a < b ? a : b; }

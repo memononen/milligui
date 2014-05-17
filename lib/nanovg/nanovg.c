@@ -1170,6 +1170,8 @@ static void nvg__flattenPaths(struct NVGcontext* ctx)
 			if (path->winding == NVG_CW && area > 0.0f)
 				nvg__polyReverse(pts, path->count);
 		}
+		if (path->winding == NVG_REVERSE)
+			nvg__polyReverse(pts, path->count);
 
 		for(i = 0; i < path->count; ++i) {
 			// Calculate segment direction and length

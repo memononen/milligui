@@ -50,6 +50,8 @@ struct NVGpaint {
 enum NVGwinding {
 	NVG_CCW = 1,			// Winding for solid shapes
 	NVG_CW = 2,				// Winding for holes
+	NVG_REVERSE = 3,		// Reverse winding
+	NVG_RETAIN = 4,			// Retain winding
 };
 
 enum NVGsolidity {

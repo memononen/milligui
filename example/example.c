@@ -26,6 +26,8 @@
 #define NANOVG_GL3_IMPLEMENTATION
 #include "nanovg_gl.h"
 #include "mgui.h"
+#define NANOSVG_IMPLEMENTATION 1
+#include "nanosvg.h"
 
 struct MGinputState input = { 0 };
 
