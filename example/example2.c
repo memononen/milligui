@@ -177,10 +177,12 @@ struct MIcell* createPanel()
 
 	miAddChild(panel, miCreateBox("id=list dir=col grow=1 spacing=5"));
 
-	footer = miCreateBox("id=footer dir=row pack=end");
+	footer = miCreateBox("id=footer dir=row pack=end spacing=5");
 		miAddChild(footer, miCreateIconButton("id=footer-add icon=plus label=Add spacing=5"));
 		miAddChild(footer, miCreateButton("id=footer-remove label=Remove spacing=5"));
 	miAddChild(panel, footer);
+
+	miAddChild(panel, miCreateSlider("id=slider padding='5 5' value=0.5 vmin=0 vmax=1 spacing=5"));
 
 	return panel;
 }
@@ -189,6 +191,8 @@ int main()
 {
 	GLFWwindow* window;
 	struct NVGcontext* vg = NULL;
+
+	char search[64];
 
 /*	int blending = 0;
 	float opacity = 0.5f;
@@ -306,8 +310,19 @@ int main()
 		input.mx = mx;
 		input.my = my;
 		miFrameBegin(vg, winWidth, winHeight, &input);
-		input.nkeys = 0;
-		input.mbut = 0;
+//		input.nkeys = 0;
+//		input.mbut = 0;
+
+		miInput(panel, &input);
+		
+/*		float s = slider;
+		if (miSync(panel, "slider", &s)) {
+			slider = s;
+		}
+
+		if (miClicked(panel, "footer-add")) {			
+		}
+*/
 		
 		miRender(panel, vg);
 

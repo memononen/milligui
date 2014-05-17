@@ -250,8 +250,26 @@ static void milli__freeVars(struct MIvar* v)
 }
 
 
+static int milli_pointInRect(float x, float y, struct MIrect r)
+{
+   return x >= r.x &&x <= r.x+r.width && y >= r.y && y <= r.y+r.height;
+}
+
+
+struct MIcontext {
+	struct MIcell* active;
+	struct MIcell* hover;
+	struct MIcell* focus;
+
+	float startmx, startmy;
+
+};
+struct MIcontext g_context;
+
 int miInit()
 {
+	memset(&g_context, 0, sizeof(g_context));
+
 	return 1;
 }
 
@@ -423,10 +441,11 @@ void milli__boxRender(struct MIcell* cell, struct NVGcontext* vg, struct MIrect*
 	struct MIbox* box = (struct MIbox*)cell;
 	struct MIcell* child;
 	struct MIrect rect = box->cell.frame;
+	struct NVGcolor color = (g_context.hover == cell) ? nvgRGBA(255,255,255,64) : nvgRGBA(255,255,255,32);
 
 	nvgBeginPath(vg);
 	nvgRect(vg, rect.x, rect.y, rect.width, rect.height);
-	nvgFillColor(vg, nvgRGBA(255,255,255,32));
+	nvgFillColor(vg, color);
 	nvgFill(vg);
 
 	// Render children
@@ -638,11 +657,10 @@ static void milli__boxMeasure(struct MIcell* cell, struct NVGcontext* vg)
 		size->height = box->height;
 }
 
-static int milli__boxLogic(struct MIcell* cell, int event, struct MIinputState* input)
+static int milli__boxLogic(struct MIcell* cell, struct MIevent* event)
 {
 	struct MIbox* box = (struct MIbox*)cell;
 	MILLI_NOTUSED(event);
-	MILLI_NOTUSED(input);
 	return 0;
 }
 
@@ -756,13 +774,15 @@ static void milli__textRender(struct MIcell* cell, struct NVGcontext* vg, struct
 {
 	struct MItext* text = (struct MItext*)cell;
 	struct MIrect rect = text->cell.frame;
+	struct NVGcolor color = (g_context.hover == cell) ? nvgRGBA(0,255,0,64) : nvgRGBA(0,255,0,32);
+
 	MILLI_NOTUSED(view);
 
 	if (text->text == NULL) return;	
 
 	nvgBeginPath(vg);
 	nvgRect(vg, rect.x, rect.y, rect.width, rect.height);
-	nvgFillColor(vg, nvgRGBA(0,255,0,32));
+	nvgFillColor(vg, color);
 	nvgFill(vg);
 
 	nvgFillColor(vg, nvgRGBA(255,255,255,255));
@@ -806,11 +826,10 @@ static void milli__textMeasure(struct MIcell* cell, struct NVGcontext* vg)
 	nvgTextMetrics(vg, NULL, NULL, &size->height);
 }
 
-static int milli__textLogic(struct MIcell* cell, int event, struct MIinputState* input)
+static int milli__textLogic(struct MIcell* cell, struct MIevent* event)
 {
 	struct MItext* text = (struct MItext*)cell;
 	MILLI_NOTUSED(event);
-	MILLI_NOTUSED(input);
 	return 0;
 }
 
@@ -899,14 +918,15 @@ static void milli__iconRender(struct MIcell* cell, struct NVGcontext* vg, struct
 {
 	struct MIicon* icon = (struct MIicon*)cell;
 	struct MIrect rect = icon->cell.frame;
-	struct MIcolor color = {255,255,255,255};
+	struct MIcolor col = {255,255,255,255};
+	struct NVGcolor color = (g_context.hover == cell) ? nvgRGBA(255,0,0,64) : nvgRGBA(255,0,0,32);
 
 	nvgBeginPath(vg);
 	nvgRect(vg, rect.x, rect.y, rect.width, rect.height);
-	nvgFillColor(vg, nvgRGBA(255,0,0,32));
+	nvgFillColor(vg, color);
 	nvgFill(vg);
 
-	drawIcon(vg, &rect, icon->image->image, &color);
+	drawIcon(vg, &rect, icon->image->image, &col);
 }
 
 int milli__iconLayout(struct MIcell* cell, struct NVGcontext* vg)
@@ -942,11 +962,10 @@ static void milli__iconMeasure(struct MIcell* cell, struct NVGcontext* vg)
 	if (icon->height > 0) size->height = icon->height;
 }
 
-static int milli__iconLogic(struct MIcell* cell, int event, struct MIinputState* input)
+static int milli__iconLogic(struct MIcell* cell, struct MIevent* event)
 {
 	struct MIicon* icon = (struct MIicon*)cell;
 	MILLI_NOTUSED(event);
-	MILLI_NOTUSED(input);
 	return 0;
 }
 
@@ -1011,38 +1030,195 @@ error:
 
 
 
+struct MIrect miInsetRect(struct MIrect r, float padx, float pady)
+{
+	padx = minf(padx, r.width/2.0f);
+	pady = minf(pady, r.height/2.0f);
+	r.x += padx;
+	r.y += pady;
+	r.width -= padx*2;
+	r.height -= pady*2;
+	return r;
+}
+
+static void milli__sliderRender(struct MIcell* cell, struct NVGcontext* vg, struct MIrect* view)
+{
+	struct MIslider* slider = (struct MIslider*)cell;
+	struct MIrect rect = miInsetRect(slider->cell.frame, slider->cell.paddingx, slider->cell.paddingy);
+	float hr = rect.height/2;
+	float slotx = rect.x + hr;
+	float slotw = maxf(0, rect.width - hr*2);
+	float hx = slotx + clampf((slider->value - slider->vmin) / (slider->vmax - slider->vmin), 0.0f, 1.0f) * slotw;
+	struct NVGcolor color = (g_context.hover == cell) ? nvgRGBA(0,0,255,64) : nvgRGBA(0,0,255,32);
+
+	nvgBeginPath(vg);
+	nvgRect(vg, rect.x, rect.y, rect.width, rect.height);
+	nvgFillColor(vg, color);
+	nvgFill(vg);
+
+	nvgBeginPath(vg);
+	nvgRect(vg, rect.x, rect.y+rect.height/2-1, rect.width, 2);
+	nvgFillColor(vg, nvgRGBA(255,255,255,128));
+	nvgFill(vg);
+
+	nvgBeginPath(vg);
+	nvgCircle(vg, hx, rect.y+rect.height/2, hr);
+	nvgFillColor(vg, nvgRGBA(255,255,255,255));
+	nvgFill(vg);
+}
+
+static int milli__sliderLayout(struct MIcell* cell, struct NVGcontext* vg)
+{
+	MILLI_NOTUSED(cell);
+	MILLI_NOTUSED(vg);
+	return 0;
+}
+
+static void milli__sliderMeasure(struct MIcell* cell, struct NVGcontext* vg)
+{
+	struct MIslider* slider = (struct MIslider*)cell;
+	struct MIsize* size = &slider->cell.content;
+	size->width = 100;
+	size->height = 20;
+	if (slider->width > 0) size->width = slider->width;
+	if (slider->height > 0) size->height = slider->height;
+}
+
+static int milli__sliderLogic(struct MIcell* cell, struct MIevent* event)
+{
+	struct MIslider* slider = (struct MIslider*)cell;
+	struct MIrect rect = miInsetRect(slider->cell.frame, slider->cell.paddingx, slider->cell.paddingy);
+	float hr = rect.height/2;
+	float slotx = rect.x + hr;
+	float slotw = maxf(0, rect.width - hr*2);
+	float hx = slotx + clampf((slider->value - slider->vmin) / (slider->vmax - slider->vmin), 0.0f, 1.0f) * slotw;
+
+	if (event->type == MI_PRESSED) {
+		if (event->mx < (hx-hr) || event->mx > (hx+hr)) {
+			if (slotw > 0) {
+				float u = (event->mx - slotx) / slotw;
+				slider->value = slider->vmin + u * (slider->vmax - slider->vmin);
+			}
+		}
+		slider->vstart = slider->value;
+	}
+	if (event->type == MI_DRAGGED) {
+		float du = event->deltamx / slotw;
+		slider->value = clampf(slider->vstart + du * (slider->vmax - slider->vmin), slider->vmin, slider->vmax);
+	}
+
+	return 0;
+}
+
+static void milli__sliderParam(struct MIcell* cell, struct MIparam* p)
+{
+	struct MIslider* slider = (struct MIslider*)cell;
+	int valid = 0;
+
+	if (miCellParam(cell, p)) return;
+
+	if (strcmp(p->key, "value") == 0) {
+		float v = 0;
+		if (sscanf(p->val, "%f", &v) == 1) {
+			slider->value = v;
+			valid = 1;
+		}
+	} else if (strcmp(p->key, "vmin") == 0) {
+		float v = 0;
+		if (sscanf(p->val, "%f", &v) == 1) {
+			slider->vmin = v;
+			valid = 1;
+		}
+	} else if (strcmp(p->key, "vmax") == 0) {
+		float v = 0;
+		if (sscanf(p->val, "%f", &v) == 1) {
+			slider->vmax = v;
+			valid = 1;
+		}
+	} else if (strcmp(p->key, "width") == 0) {
+		float width = -1;
+		sscanf(p->val, "%f", &width);
+		if (width > 0 && width < 10000) {
+			slider->width = width;
+			valid = 1;
+		}
+	} else if (strcmp(p->key, "height") == 0) {
+		float height = -1;
+		sscanf(p->val, "%f", &height);
+		if (height > 0 && height < 10000) {
+			slider->width = height;
+			valid = 1;
+		}
+	}
+
+	if (!valid)
+		printf("Slider: invalid parameter: %s=%s\n", p->key, p->val);
+}
+
+static void milli__sliderDtor(struct MIcell* cell)
+{
+	struct MIslider* slider = (struct MIslider*)cell;
+}
+
+struct MIcell* miCreateSlider(const char* params)
+{
+	struct MIslider* slider = (struct MIslider*)calloc(1, sizeof(struct MIslider));
+	if (slider == NULL) goto error;
+	slider->cell.render = milli__sliderRender;
+	slider->cell.layout = milli__sliderLayout;
+	slider->cell.logic = milli__sliderLogic;
+	slider->cell.measure = milli__sliderMeasure;
+	slider->cell.param = milli__sliderParam;
+	slider->cell.dtor = milli__sliderDtor;
+	slider->value = 0;
+	slider->vmin = 0;
+	slider->vmax = 1;
+	slider->width = -1;
+	slider->height = -1;
+	miSet((struct MIcell*)slider, params);
+	return (struct MIcell*)slider;
+error:
+	return NULL;
+}
+
+
+
 static void milli__templateRender(struct MIcell* cell, struct NVGcontext* vg, struct MIrect* view)
 {
 	struct MItemplate* tmpl = (struct MItemplate*)cell;
-	if (tmpl->host->render)
-		tmpl->host->render(tmpl->host, vg, view);
+	struct MIcell* host = tmpl->cell.children;
+	if (host->render)
+		host->render(host, vg, view);
 }
 
 static int milli__templateLayout(struct MIcell* cell, struct NVGcontext* vg)
 {
 	struct MItemplate* tmpl = (struct MItemplate*)cell;
-	tmpl->host->frame = tmpl->cell.frame;
-	if (tmpl->host->layout)
-		return tmpl->host->layout(tmpl->host, vg);
+	struct MIcell* host = tmpl->cell.children;
+	host->frame = tmpl->cell.frame;
+	if (host->layout)
+		return host->layout(host, vg);
 	return 0;
 }
 
 static void milli__templateMeasure(struct MIcell* cell, struct NVGcontext* vg)
 {
 	struct MItemplate* tmpl = (struct MItemplate*)cell;
-	if (tmpl->host->measure) {
-		tmpl->host->measure(tmpl->host, vg);
-		tmpl->cell.content = tmpl->host->content;
+	struct MIcell* host = tmpl->cell.children;
+	if (host->measure) {
+		host->measure(host, vg);
+		tmpl->cell.content = host->content;
 	} else {
 		tmpl->cell.content.width = tmpl->cell.content.height = 0;
 	}
 }
 
-static int milli__templateLogic(struct MIcell* cell, int event, struct MIinputState* input)
+static int milli__templateLogic(struct MIcell* cell, struct MIevent* event)
 {
 	struct MItemplate* tmpl = (struct MItemplate*)cell;
-	if (tmpl->host->logic)
-		return tmpl->host->logic(tmpl->host, event, input);
+	struct MIcell* host = tmpl->cell.children;
+	if (host->logic)
+		return host->logic(host, event);
 	return 0;
 }
 
@@ -1070,21 +1246,22 @@ static int milli__templateSetVar(struct MIcell* cell, char* name, char* val)
 static void milli__templateParam(struct MIcell* cell, struct MIparam* p)
 {
 	struct MItemplate* tmpl = (struct MItemplate*)cell;
+	struct MIcell* host = tmpl->cell.children;
 
 //	printf("template %s=%s\n", p->key, p->val);
 
 	// First try to user variables
-	if (milli__templateSetVar(tmpl->host, p->key, p->val))
+	if (milli__templateSetVar(host, p->key, p->val))
 		return;
 
 	// Finally pass to host
-	if (tmpl->host->param)
-		tmpl->host->param(tmpl->host, p);
+	if (host->param)
+		host->param(host, p);
 
-	tmpl->cell.grow = tmpl->host->grow;
-	tmpl->cell.paddingx = tmpl->host->paddingx;
-	tmpl->cell.paddingy = tmpl->host->paddingy;
-	tmpl->cell.spacing = tmpl->host->spacing;
+	tmpl->cell.grow = host->grow;
+	tmpl->cell.paddingx = host->paddingx;
+	tmpl->cell.paddingy = host->paddingy;
+	tmpl->cell.spacing = host->spacing;
 
 /*		int valid = 0;
 		if (miCellParam(cell, p)) continue;
@@ -1116,8 +1293,6 @@ static void milli__templateParam(struct MIcell* cell, struct MIparam* p)
 static void milli__templateDtor(struct MIcell* cell)
 {
 	struct MItemplate* tmpl = (struct MItemplate*)cell;
-	if (tmpl->host->dtor)
-		return tmpl->host->dtor(tmpl->host);
 }
 
 struct MIcell* miCreateTemplate(struct MIcell* host)
@@ -1130,11 +1305,13 @@ struct MIcell* miCreateTemplate(struct MIcell* host)
 	tmpl->cell.measure = milli__templateMeasure;
 	tmpl->cell.param = milli__templateParam;
 	tmpl->cell.dtor = milli__templateDtor;
-	tmpl->host = host;
-	tmpl->cell.grow = tmpl->host->grow;
-	tmpl->cell.paddingx = tmpl->host->paddingx;
-	tmpl->cell.paddingy = tmpl->host->paddingy;
-	tmpl->cell.spacing = tmpl->host->spacing;
+
+	miAddChild(tmpl, host);
+
+	tmpl->cell.grow = host->grow;
+	tmpl->cell.paddingx = host->paddingx;
+	tmpl->cell.paddingy = host->paddingy;
+	tmpl->cell.spacing = host->spacing;
 
 //	miSet((struct MIcell*)tmpl, params);
 	return (struct MIcell*)tmpl;
@@ -1230,6 +1407,151 @@ void miLayout(struct MIcell* cell, struct NVGcontext* vg)
 	cell->frame.height = cell->content.height + cell->paddingy*2;
 	if (cell->layout != NULL)
 		cell->layout(cell, vg);
+}
+
+
+/*static struct MIcell* milli__clearState(struct MIcell* cell, struct MIinputState* input)
+{
+	if (cell == NULL) return NULL;
+	if (milli_pointInRect(input->mx, input->my, cell->frame)) {
+		struct MIcell* childHit = milli__hitTest(cell->children, input);
+		return childHit != NULL ? childHit : cell;
+	}
+	return milli__hitTest(cell->next, input);
+}*/
+
+static void milli__setHover(struct MIcell* cell, struct MIcell* hover)
+{
+	if (cell == NULL) return;
+	milli__setHover(cell->next, hover);
+	milli__setHover(cell->children, hover);
+	cell->hover = (cell == hover) ? 1 : 0;
+}
+
+static void milli__setActive(struct MIcell* cell, struct MIcell* active)
+{
+	if (cell == NULL) return;
+	milli__setActive(cell->next, active);
+	milli__setActive(cell->children, active);
+	cell->active = (cell == active) ? 1 : 0;
+}
+
+static struct MIcell* milli__hitTest(struct MIcell* cell, struct MIinputState* input)
+{
+	if (cell == NULL) return NULL;
+	if (milli_pointInRect(input->mx, input->my, cell->frame)) {
+		struct MIcell* hit = milli__hitTest(cell->children, input);
+		if (hit != NULL) return hit;
+		return cell;
+	}
+	return milli__hitTest(cell->next, input);
+}
+
+static void fireLogic(struct MIcell* cell, int type, struct MIevent* event)
+{
+	if (cell == NULL) return;
+	event->type = type;
+	if (cell->logic != NULL)
+		cell->logic(cell, event);
+}
+
+void miInput(struct MIcell* cell, struct MIinputState* input)
+{
+	struct MIcell* hit = NULL;
+	struct MIcell* entered = NULL;
+	struct MIcell* exited = NULL;
+	struct MIcell* focused = NULL;
+	struct MIcell* blurred = NULL;
+	struct MIcell* clicked = NULL;
+	struct MIcell* pressed = NULL;
+	struct MIcell* dragged = NULL;
+	struct MIcell* released = NULL;
+	struct MIevent event;
+	int i;
+
+	if (cell == NULL) return;
+
+	hit = milli__hitTest(cell, input);
+
+	if (g_context.active == NULL) {
+		if (g_context.hover != hit) {
+			exited = g_context.hover;
+			entered = hit;
+			g_context.hover = hit;
+		}
+		if (input->mbut & MI_MOUSE_PRESSED) {
+			if (g_context.focus != hit) {
+				blurred = g_context.focus;
+				focused = hit;
+			}
+			g_context.focus = hit;
+			g_context.active = hit;
+			pressed = hit;
+		}
+	}
+	// Press and release can happen in same frame.
+	if (g_context.active != NULL) {
+		if (hit == NULL || hit == g_context.active) {
+			if (g_context.hover != hit) {
+				exited = g_context.hover;
+				entered = hit;
+				g_context.hover = hit;
+			}
+//			context.hover = hit->id;
+		}
+		if (input->mbut & MI_MOUSE_RELEASED) {
+			if (g_context.hover == g_context.active)
+				clicked = g_context.hover;
+			released = g_context.active;
+			g_context.active = NULL;
+		} else {
+//			if (g_context.moved)
+				dragged = g_context.active;
+		}
+	}
+
+	// Update mouse positions.
+	if (pressed != NULL) {
+		g_context.startmx = input->mx;
+		g_context.startmy = input->my;
+	}
+
+	event.mx = input->mx;
+	event.my = input->my;
+	event.mbut = input->mbut;
+	event.key = 0;
+
+	if (g_context.active != NULL) {
+		event.deltamx = input->mx - g_context.startmx;
+		event.deltamy = input->my - g_context.startmy;
+	}
+
+//	setHit(context.hover, &context.hoverHit);
+//	setHit(context.active, &context.activeHit);
+
+	fireLogic(blurred, MI_BLURRED, &event);
+	fireLogic(focused, MI_FOCUSED, &event);
+	fireLogic(pressed, MI_PRESSED, &event);
+	fireLogic(dragged, MI_DRAGGED, &event);
+	fireLogic(released, MI_RELEASED, &event);
+	fireLogic(clicked, MI_CLICKED, &event);
+	fireLogic(exited, MI_EXITED, &event);
+	fireLogic(entered, MI_ENTERED, &event);
+
+	if (g_context.focus != 0) {
+		for (i = 0; i < input->nkeys; i++) {
+			event.key = input->keys[i].code;
+			fireLogic(g_context.focus, input->keys[i].type, &event);
+		}
+	}
+
+
+//	if (cell->logic != NULL)
+//		cell->logic(cell, vg);
+
+	// Mark input consumed
+	input->nkeys = 0;
+	input->mbut = 0;
 }
 
 void miRender(struct MIcell* cell, struct NVGcontext* vg)
