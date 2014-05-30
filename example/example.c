@@ -115,6 +115,7 @@ static void keycb(GLFWwindow* window, int key, int scancode, int action, int mod
 			if (input.nkeys < MG_MAX_INPUTKEYS) {
 				input.keys[input.nkeys].type = MG_KEYPRESSED;
 				input.keys[input.nkeys].code = key;
+				input.keys[input.nkeys].mods = mods;
 				input.nkeys++;
 			}
 		}
@@ -124,6 +125,7 @@ static void keycb(GLFWwindow* window, int key, int scancode, int action, int mod
 			if (input.nkeys < MG_MAX_INPUTKEYS) {
 				input.keys[input.nkeys].type = MG_KEYRELEASED;
 				input.keys[input.nkeys].code = key;
+				input.keys[input.nkeys].mods = mods;
 				input.nkeys++;
 			}
 		}
@@ -138,6 +140,7 @@ static void charcb(GLFWwindow* window, unsigned int codepoint)
 		if (input.nkeys < MG_MAX_INPUTKEYS) {
 			input.keys[input.nkeys].type = MG_CHARTYPED;
 			input.keys[input.nkeys].code = codepoint;
+			input.keys[input.nkeys].mods = 0;
 			input.nkeys++;
 		}
 	}
@@ -170,9 +173,10 @@ int main()
 	float color[4] = {255/255.0f,192/255.0f,0/255.0f,255/255.0f};
 	float iterations = 42;
 	int cull = 1;
-	char name[64] = "Mikko";
+	char name[32] = "Mikko";
 	const char* choices[] = { "Normal", "Minimum Color", "Screen Door", "Maximum Velocity" };
 	float scroll = 30;
+	double t = 0;
 
 	printf("start\n");
 
@@ -259,6 +263,7 @@ int main()
 		int winWidth, winHeight;
 		int fbWidth, fbHeight;
 		float pxRatio;
+		double tt, dt;
 
 		unsigned int build = 0;
 		unsigned int fileOpen = 0;
@@ -267,6 +272,9 @@ int main()
 		unsigned int tools = 0, toolsAlign = 0;
 		unsigned int view = 0;
 
+		tt = glfwGetTime();
+		dt = tt - t;
+		t = tt;
 
 //		float t = glfwGetTime();
 //		float x,y,popy;
@@ -302,7 +310,7 @@ int main()
 
 		input.mx = mx;
 		input.my = my;
-		mgFrameBegin(vg, winWidth, winHeight, &input);
+		mgFrameBegin(vg, winWidth, winHeight, &input, dt);
 		input.nkeys = 0;
 		input.mbut = 0;
 
@@ -365,7 +373,7 @@ if (mgLogic(but, MG_WAIT, MG_HOVERED, 0)) {
 
 		mgPanelBegin(MG_ROW, 0,0, 0, mgOpts(mgWidth(winWidth), mgHeight(30), mgTag("menubar"), mgAlign(MG_JUSTIFY)));
 			file = mgItem("File", mgOpts());
-			mgPopupBegin(file, MG_HOVER, MG_COL, mgOpts(mgTag("menu1")));
+			mgPopupBegin(file, MG_ACTIVE, MG_COL, mgOpts(mgTag("menu1")));
 				fileOpen = mgItem("Open...", mgOpts());
 				mgItem("Save", mgOpts());
 				mgItem("Save As...", mgOpts());
@@ -373,7 +381,7 @@ if (mgLogic(but, MG_WAIT, MG_HOVERED, 0)) {
 			mgPopupEnd();
 
 			edit = mgItem("Edit", mgOpts());
-			mgPopupBegin(edit, MG_HOVER, MG_COL, mgOpts(mgTag("menu1")));
+			mgPopupBegin(edit, MG_ACTIVE, MG_COL, mgOpts(mgTag("menu1")));
 				mgItem("Undo", mgOpts());
 				mgItem("Redo", mgOpts());
 				mgItem("Cut", mgOpts());
@@ -382,7 +390,7 @@ if (mgLogic(but, MG_WAIT, MG_HOVERED, 0)) {
 			mgPopupEnd();
 
 			tools = mgItem("Tools", mgOpts());
-			mgPopupBegin(tools, MG_HOVER, MG_COL, mgOpts(mgTag("menu1")));
+			mgPopupBegin(tools, MG_ACTIVE, MG_COL, mgOpts(mgTag("menu1")));
 				mgItem("Build", mgOpts());
 				mgItem("Clear", mgOpts());
 				toolsAlign = mgItem("Align", mgOpts());
@@ -394,7 +402,7 @@ if (mgLogic(but, MG_WAIT, MG_HOVERED, 0)) {
 			mgPopupEnd();
 
 			view = mgItem("View", mgOpts());
-			mgPopupBegin(view, MG_HOVER, MG_COL, mgOpts(mgTag("menu1")));
+			mgPopupBegin(view, MG_ACTIVE, MG_COL, mgOpts(mgTag("menu1")));
 				mgItem("Sidebar", mgOpts());
 				mgItem("Minimap", mgOpts());
 				mgItem("Tabs", mgOpts());
@@ -415,7 +423,12 @@ if (mgLogic(but, MG_WAIT, MG_HOVERED, 0)) {
 		mgSelect(&blending, choices, 4, mgOpts());
 
 		mgLabel("Opacity", mgOpts());
-		mgSlider(&opacity, 0.0f, 1.0f, mgOpts());
+		mgBoxBegin(MG_ROW, mgOpts(mgAlign(MG_CENTER)));
+			if (mgChanged(mgSlider(&opacity, 0.0f, 1.0f, mgOpts(mgGrow(1))))) {
+				printf("opacity = %f\n", opacity);
+			}
+			mgNumber(&opacity, mgOpts());
+		mgBoxEnd();
 
 /*
 		// TODO: different in/out?
@@ -439,7 +452,7 @@ if (mgLogic(but, MG_WAIT, MG_HOVERED, 0)) {
 		mgCheckBox("Cull Enabled", &cull, mgOpts());
 		mgLabel("Name", mgOpts());
 
-		mgInput(name, 64, mgOpts());
+		mgInput(name, sizeof(name), mgOpts());
 
 		build = mgIconButton("tools", "Build", mgOpts());
 		if (mgClicked(build)) {

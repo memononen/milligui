@@ -161,7 +161,9 @@ struct MGhit {
 	float mx, my;
 	float deltamx, deltamy;
 	float localmx, localmy;
+	int mods;
 	unsigned int code;
+	int clickCount;
 	unsigned char storage[128];
 
 	struct MGrect rect;
@@ -241,7 +243,7 @@ struct MGwidget {
 
 #define MG_MAX_INPUTKEYS 32
 struct MGkeyPress {
-	int type, code;
+	int type, code, mods;
 };
 struct MGinputState
 {
@@ -251,7 +253,7 @@ struct MGinputState
 	int nkeys;	
 };
 
-void mgFrameBegin(struct NVGcontext* vg, int width, int height, struct MGinputState* input);
+void mgFrameBegin(struct NVGcontext* vg, int width, int height, struct MGinputState* input, float dt);
 void mgFrameEnd();
 
 int mgCreateIcon(const char* name, const char* filename);
@@ -298,9 +300,13 @@ int mgBlurred(unsigned int id);
 int mgFocused(unsigned int id);
 int mgExited(unsigned int id);
 int mgEntered(unsigned int id);
+int mgChanged(unsigned int id);
 
-int mgActive(unsigned int id);
-int mgHover(unsigned int id);
-int mgFocus(unsigned int id);
+int mgIsActive(unsigned int id);
+int mgIsHover(unsigned int id);
+int mgIsFocus(unsigned int id);
+
+void mgFocus(unsigned int id);
+void mgBlur(unsigned int id);
 
 #endif // MGUI_H

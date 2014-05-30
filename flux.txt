@@ -1,0 +1,204 @@
+
+struct MIstore {	
+};
+
+typedef int (*MIactionFun)(void* state, void* payload, int size);
+
+struct MIaction {
+	const char* name;	
+	MIactionFun action;
+};
+
+void miStoreChanged(int store);
+void miDispatch(const char* action, void* data, int size);
+int miCreateStore(struct MIaction* actions, void* state);
+
+
+struct TodoItem {
+	int id;
+	char* text;
+	int completed;
+};
+
+struct TodoState {
+	struct TodoItem* items;
+	int count;
+};
+
+struct TodoStore {
+	struct MIstore store;
+	struct TodoState state;
+	int id;
+};
+
+struct TodoStore _todoStore;
+int _todoStoreId = 0;
+
+
+static int _onAddTodo(void* state, void* payload, int size)
+{	
+	struct TodoItem* items = NULL;
+	struct TodoItem* it = NULL;
+	
+	// Grow array
+	items = realloc(_todoStore.state.items);
+	if (items == NULL) return 0;
+	_todoStore.state.items = items;
+	
+	// Create new item
+	it = (struct TodoItem*)calloc(1, sizeof(struct TodoItem));
+	if (it == NULL) goto error;
+	it->text = strndup((char*)payload, size);
+	if (it->text == NULL) goto error;
+	
+	// Add item
+	it->id = _todoStore.id++;
+	_todoStore.state.items[_todoStore.state.count++] = it;
+
+	miStoreChanged(_todoStoreId);
+
+	return 1;
+error:
+	if (it != NULL) {
+		free(it->text);
+		free(it);
+	}
+	return 0;
+}
+
+static int _onToggleTodo(void* state, void* payload, int size)
+{	
+	int i;
+	int id = *(int*)payload;
+	for (i = 0; i < _todoStore.state.count; i++) {
+		if (_todoStore.state.items[i].id == id) {
+			_todoStore.state.items[i].completed = !_todoStore.state.items[i].completed;
+			miStoreChanged(_todoStoreId);
+			return 1;
+		}
+	}
+	return 0;
+} 
+
+static int _onClearTodos(void* state, void* payload, int size)
+{	
+	int i, head = 0;
+	// Removed completed items.
+	for (i = 0; i < _todoStore.state.count; i++) {
+		if (!_todoStore.state.items[i].completed)
+			_todoStore.state.items[head++] = _todoStore.state.items[i];
+	}
+	_todoStore.state.count = head;
+
+	miStoreChanged(_todoStoreId);
+
+	return 0;
+}
+
+struct MIaction _todoActions {
+	{ "ADD_TODO", _onAddTodo },
+	{ "TOGGLE_TODO", _onToggleTodo },
+	{ "CLEAR_TODOS", _onCleanTodos },
+	NULL
+};
+
+
+void initTodoStore()
+{
+	_todoStoreId = miCreateStore(_todoActions, &_todoStore.state);
+}
+
+void addTodo(const char* text)
+{
+	miDispatch("ADD_TODO", text, sizeof(text));
+}
+
+void toggleTodo(int id)
+{
+	miDispatch("TOGGLE_TODO", &id, sizeof(int));
+}
+
+void clearTodos()
+{
+	miDispatch("CLEAR_TODOS", NULL, 0);
+}
+
+const struct TodoState* getTodoState()
+{	
+	return &_todoState;
+}
+
+
+// Public API
+void initTodoStore();
+void addTodo(const char* text);
+void toggleTodo(int id);
+void clearTodos();
+
+struct TodoItem* getTodoItems();
+int getTodoItemCount();
+
+
+
+
+void initAppComponent();
+void initTodoItemComponent();
+
+
+_todoItemRender(struct MIcomponent* comp, void* state)
+{
+	struct TodoItem* item = (struct TodoItem*)state;
+	if (miClicked(miText(item->text)))
+		toggleTodo(id);
+}
+
+
+struct MIcomponent* _todoItemCreate()
+{
+	struct MIcomponent* comp = (struct MIcomponent*)calloc(1, sizeof(struct MIcomponent));
+	if (comp == NULL) goto error;
+
+	return comp;
+
+error:
+	free(comp);
+	return NULL;
+}
+
+void initTodoItemComponent()
+{
+	miRegisterClass("todo-item");
+}
+
+
+_appRender(struct MIcomponent* comp, void* state)
+{
+	int i;
+	miBegin(miBox(MI_COL));
+		miBegin(miBox(MI_COL));
+			for (i = 0; i < getTodoItemCount(state); i++)
+		miEnd();
+	miEnd();
+
+
+	  <div>
+        <ul>
+          {this.state.todos.map(function(todo, i) {
+            return <li key={i}><TodoItem todo={todo} /></li>;
+          })}
+        </ul>
+        <form onSubmit={this.onSubmitForm}>
+          <input ref="input" type="text" size="30" placeholder="New Todo" />
+          <input type="submit" value="Add Todo" />
+        </form>
+        <button onClick={this.clearCompletedTodos}>Clear Completed</button>
+      </div>
+}
+
+void initAppComponent()
+{
+}
+
+
+
+miRenderComponent("app");

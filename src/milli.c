@@ -1345,6 +1345,48 @@ struct MIcell* miCreateIconButton(const char* params)
 		miAddChild(button, miCreateIcon("icon={icon} spacing=5"));
 		miAddChild(button, miCreateText("label={label}"));
 
+/*
+	miBegin(miBox("id={id} dir=row align=justify padding='5 5' spacing=5 height=20"));
+		miText("label={label}"));
+		miBegin(miPopup(""));
+			miCollection("id=options");
+		miEnd();
+	miEnd();
+
+
+	miBegin(miSelect("id=blend-mode"));
+		miCollectionBegin("options");
+			miMenuItem("label=Alpha value=0");
+			miMenuItem("label=Screen value=1");
+			miMenuItem("label=Multiply value=2");
+			miMenuItem("label=Overlay value=3");
+		miCollectionEnd();
+	miEnd();
+
+	
+	miSetInt("blend-mode", blendMode);
+	if (miChanged("blend-mode")) {
+		miGetInt("blend-mode", &blendMode);
+	}
+
+
+
+		for (i = 0; i < materialCount; i++) {
+			miBegin(materialItem);
+				miSetStr("name", materisl[i].name);
+				miSetFloat4("color", materisl[i].color);
+				if (miChanged("name") || miChanged("color")) {
+					miGetStr("name", materisl[i].name, sizeof(materisl[i].name));
+					miGetFloat4("color", materisl[i].color);
+					saveUndo();
+				}
+			miEnd();
+		}
+		miCollectionEnd();
+
+
+*/
+
 	tmpl = miCreateTemplate(button);
 	miSet(tmpl, params);
 

@@ -8,6 +8,7 @@
 
 static int mini(int a, int b) { return a < b ? a : b; }
 static int maxi(int a, int b) { return a > b ? a : b; }
+static int clampi(int a, int mn, int mx) { return a < mn ? mn : (a > mx ? mx : a); }
 static float minf(float a, float b) { return a < b ? a : b; }
 static float maxf(float a, float b) { return a > b ? a : b; }
 static float clampf(float a, float mn, float mx) { return a < mn ? mn : (a > mx ? mx : a); }
@@ -301,6 +302,13 @@ struct MGcontext
 	float deltamx, deltamy;
 	int moved;
 	int drag;
+	int clickCount;
+
+	float timeSincePress;
+	float dt;
+
+	unsigned int forceFocus;
+	unsigned int forceBlur;
 
 	unsigned int active;
 	unsigned int hover;
@@ -1231,13 +1239,15 @@ void mgTerminate()
 	deleteIcons();
 }
 
-void mgFrameBegin(struct NVGcontext* vg, int width, int height, struct MGinputState* input)
+void mgFrameBegin(struct NVGcontext* vg, int width, int height, struct MGinputState* input, float dt)
 {
 	context.moved = absf(context.input.mx - input->mx) > 0.01f || absf(context.input.my - input->my) > 0.01f;
 	memcpy(&context.input, input, sizeof(*input));
 
 	context.width = width;
 	context.height = height;
+
+	context.dt = dt;
 
 	context.vg = vg;
 
@@ -1457,6 +1467,16 @@ static void updateLogic(const float* bounds)
 		}
 	}
 
+	if (context.input.mbut & MG_MOUSE_PRESSED) {
+		if (context.timeSincePress < 0.5f)
+			context.clickCount++;
+		else
+			context.clickCount = 1;
+		context.timeSincePress = 0;
+	} else {
+		context.timeSincePress += minf(context.dt, 0.1f);
+	}	
+
 //	context.hover = 0;
 	context.focused = 0;
 	context.blurred = 0;
@@ -1468,7 +1488,7 @@ static void updateLogic(const float* bounds)
 	context.released = 0;
 
 	if (context.active == 0) {
-		unsigned int id = hit != NULL ? hit->id : 0;
+		unsigned int id = hit != NULL ? hit->id : 0;		
 		if (context.hover != id) {
 			context.exited = context.hover;
 			context.entered = id;
@@ -1482,6 +1502,23 @@ static void updateLogic(const float* bounds)
 			context.focus = id;
 			context.active = id;
 			context.pressed = id;
+		} else {
+			if (context.forceFocus != 0) {
+				if (context.focus != context.forceFocus) {
+					context.blurred = context.focus;
+					context.focused = context.forceFocus;
+				}
+				context.focus = context.forceFocus;
+				context.forceFocus = 0;
+			}
+			if (context.forceBlur != 0) {
+				if (context.focus != 0) {
+					context.blurred = context.focus;
+					context.focused = 0;
+				}
+				context.focus = 0;
+				context.forceBlur = 0;
+			}
 		}
 	}
 	// Press and release can happen in same frame.
@@ -1547,6 +1584,7 @@ static void updateLogic(const float* bounds)
 	context.activeHit.my = context.input.my;
 	context.activeHit.deltamx = context.deltamx;
 	context.activeHit.deltamy = context.deltamy;
+	context.activeHit.clickCount = context.clickCount;
 
 	setHit(context.hover, &context.hoverHit);
 	setHit(context.active, &context.activeHit);
@@ -1563,8 +1601,11 @@ static void updateLogic(const float* bounds)
 	if (context.focus != 0) {
 		for (i = 0; i < context.input.nkeys; i++) {
 			context.activeHit.code = context.input.keys[i].code;
+			context.activeHit.mods = context.input.keys[i].mods;
 			fireLogic(context.focus, context.input.keys[i].type, &context.activeHit);
 		}
+		context.activeHit.code = 0;
+		context.activeHit.mods = 0;
 	}
 	context.input.nkeys = 0;
 
@@ -1718,18 +1759,23 @@ static void drawRect(float x, float y, float width, float height, struct MGstyle
 
 static int measureTextGlyphs(struct MGwidget* w, const char* text, struct NVGglyphPosition* pos, int maxpos)
 {
+	int i, count = 0;
 	nvgFontSize(context.vg, w->style.fontSize);
 	if (w->style.textAlign == MG_CENTER) {
 		nvgTextAlign(context.vg, NVG_ALIGN_CENTER|NVG_ALIGN_MIDDLE);
-		return nvgTextGlyphPositions(context.vg, w->x + w->width/2, w->y + w->height/2, text, NULL, pos, maxpos);
+		count = nvgTextGlyphPositions(context.vg, w->x + w->width/2, w->y + w->height/2, text, NULL, pos, maxpos);
 	} else if (w->style.textAlign == MG_END) {
 		nvgTextAlign(context.vg, NVG_ALIGN_RIGHT|NVG_ALIGN_MIDDLE);
-		return nvgTextGlyphPositions(context.vg, w->x + w->width - w->style.paddingx, w->y + w->height/2, text, NULL, pos, maxpos);
+		count = nvgTextGlyphPositions(context.vg, w->x + w->width - w->style.paddingx, w->y + w->height/2, text, NULL, pos, maxpos);
 	} else {
 		nvgTextAlign(context.vg, NVG_ALIGN_LEFT|NVG_ALIGN_MIDDLE);
-		return nvgTextGlyphPositions(context.vg, w->x + w->style.paddingx, w->y + w->height/2, text, NULL, pos, maxpos);
+		count = nvgTextGlyphPositions(context.vg, w->x + w->style.paddingx, w->y + w->height/2, text, NULL, pos, maxpos);
 	}
-	return 0;
+	// Turn str to indices.
+	for (i = 0; i < count; i++)
+		pos[i].str -= text;
+
+	return count;
 }
 
 static void drawText(struct MGwidget* w, const char* text)
@@ -3107,7 +3153,7 @@ static void sliderDraw(void* uptr, struct MGwidget* w, struct NVGcontext* vg, co
 	(void)uptr;
 	(void)view;
 
-	if (mgActive(w->id)) {
+	if (mgIsActive(w->id)) {
 		if (!mgGetStateBlock(w->id, 0, (void**)&state, NULL)) return;
 	} else {
 		if (!mgGetValueBlock(w->id, (void**)&state, NULL)) return;
@@ -3367,6 +3413,8 @@ struct MGtextInputState {
 	int maxText;
 	int caretPos;
 	int nglyphs;
+	int selPivot;
+	int selStart, selEnd;
 };
 
 static void inputDraw(void* uptr, struct MGwidget* w, struct NVGcontext* vg, const float* view)
@@ -3378,33 +3426,51 @@ static void inputDraw(void* uptr, struct MGwidget* w, struct NVGcontext* vg, con
 
 	nvgScissor(vg, (int)view[0], (int)view[1], (int)view[2], (int)view[3]);
 
-	if (mgFocus(w->id)) {
+	if (mgIsFocus(w->id)) {
 		int j;
 		float caretx = 0;
 		struct MGtextInputState* state = NULL;
 		char* stateText = NULL;
 		struct NVGglyphPosition* stateGlyphs = NULL;
+
 		if (!mgGetStateBlock(w->id, 0, (void**)&state, NULL)) return;
 		if (!mgGetStateBlock(w->id, 1, (void**)&stateText, NULL)) return;
 		if (!mgGetStateBlock(w->id, 2, (void**)&stateGlyphs, NULL)) return;
 
+		if (state->selStart != state->selEnd && state->nglyphs > 0) {
+			float sx = (state->selStart >= state->nglyphs) ? stateGlyphs[state->nglyphs-1].maxx : stateGlyphs[state->selStart].x;
+			float ex = (state->selEnd >= state->nglyphs) ? stateGlyphs[state->nglyphs-1].maxx : stateGlyphs[state->selEnd].x;
+			nvgFillColor(vg, nvgRGBA(255,0,0,64));
+			nvgBeginPath(vg);
+			nvgRect(vg, sx, w->y+w->style.paddingy, ex - sx, w->height-w->style.paddingy*2);
+			nvgFill(vg);
+		}
+
 		drawText(w, stateText);
-//							printf("input  max=%d i='%s' w='%s' pos=%p npos=%d\n", input->maxText, input->buf, w->text, input->pos, input->npos);
-		nvgFillColor(vg, nvgRGBA(255,0,0,64));
+
+/*		nvgFillColor(vg, nvgRGBA(255,0,0,64));
 		for (j = 0; j < state->nglyphs; j++) {
 			struct NVGglyphPosition* p = &stateGlyphs[j];
 			nvgBeginPath(vg);
 			nvgRect(vg, p->minx, w->y, p->maxx - p->minx, w->height);
 			nvgFill(vg);
-		}
+		}*/
 
-		if (state->caretPos >= state->nglyphs)
+		if (state->nglyphs == 0) {
+			if (w->style.textAlign == MG_CENTER)
+				caretx = w->x + w->width/2;
+			else if (w->style.textAlign == MG_END)
+				caretx = w->x + w->width - w->style.paddingx;
+			else
+				caretx = w->x + w->style.paddingx;
+		} else if (state->caretPos >= state->nglyphs) {
 			caretx = stateGlyphs[state->nglyphs-1].maxx;
-		else
+		} else {
 			caretx = stateGlyphs[state->caretPos].x;
+		}
 		nvgFillColor(vg, nvgRGBA(255,0,0,255));
 		nvgBeginPath(vg);
-		nvgRect(vg, (int)(caretx-0.5f), w->y, 1, w->height);
+		nvgRect(vg, (int)(caretx-0.5f), w->y+w->style.paddingy, 1, w->height-w->style.paddingy*2);
 		nvgFill(vg);
 
 	} else {
@@ -3440,13 +3506,35 @@ static void insertText(char* dst, int ndst, int idx, char* str, int nstr)
 {
 	int i, count;
 	if (idx < 0 || idx >= ndst) return;
-	dst += idx;
+	// Make space for the new string
+	for (i = ndst-1; i >= idx+nstr; i--)
+		dst[i] = dst[i-nstr];
+	// Insert
 	count = mini(idx+nstr, ndst-1) - idx;
 	for (i = 0; i < count; i++)
-		*dst++ = *str++;
-	*dst++ = '\0';
+		dst[idx+i] = str[i];
+	dst[ndst-1] = '\0';
 }
 
+static void deleteText(char* dst, int ndst, int idx, int ndel)
+{
+	int i;
+	if (idx < 0 || idx >= ndst) return;
+	for (i = idx; i < ndst-ndel; i++)
+		dst[i] = dst[i+ndel];
+}
+
+static int isSpace(int c)
+{
+	switch (c) {
+		case 9:			// \t
+		case 11:		// \v
+		case 12:		// \f
+		case 32:		// space
+			return 1;
+	};
+	return 0;
+}
 
 static void inputLogic(void* uptr, struct MGwidget* w, int event, struct MGhit* hit)
 {
@@ -3466,7 +3554,7 @@ static void inputLogic(void* uptr, struct MGwidget* w, int event, struct MGhit* 
 		state->maxText = maxText;
 		state->nglyphs = measureTextGlyphs(w, stateText, stateGlyphs, maxText);
 		state->caretPos = 0;
-		printf("%d focused\n", w->id);
+//		printf("%d focused\n", w->id);
 	}
 	if (event == MG_BLURRED) {
 		mgFreeStateBlock(w->id, 0);
@@ -3480,37 +3568,145 @@ static void inputLogic(void* uptr, struct MGwidget* w, int event, struct MGhit* 
 	if (!mgGetStateBlock(w->id, 2, (void**)&stateGlyphs, NULL)) return;
 
 	if (event == MG_PRESSED) {
-		state->caretPos = findCaretPos(hit->mx, stateGlyphs, state->nglyphs);
+		if (hit->clickCount > 1) {
+			state->selStart = 0;
+			state->selEnd = state->selPivot = state->caretPos = state->nglyphs;
+		} else {
+			state->caretPos = findCaretPos(hit->mx, stateGlyphs, state->nglyphs);
+			state->selStart = state->selEnd = state->selPivot = state->caretPos;
+		}
 	}
 	if (event == MG_DRAGGED) {
 		state->caretPos = findCaretPos(hit->mx, stateGlyphs, state->nglyphs);
+		state->selStart = mini(state->caretPos, state->selPivot);
+		state->selEnd = maxi(state->caretPos, state->selPivot);
+	}
+	if (event == MG_RELEASED) {
 	}
 	if (event == MG_KEYPRESSED) {
-		printf("%d pressed: %d\n", w->id, hit->code);
+		printf("%d pressed:%d mods:%x\n", w->id, hit->code, hit->mods);
+		if (hit->code == 263) {
+			// Left
+			if (hit->mods & 1) { // Shift
+				if (state->selPivot == -1)
+					state->selPivot = state->caretPos;
+			}
+			if (hit->mods & 4) { // Alt
+				// Prev word
+				while (state->caretPos > 0 && isSpace(stateText[(int)stateGlyphs[state->caretPos-1].str]))
+					state->caretPos--;
+				while (state->caretPos > 0 && !isSpace(stateText[(int)stateGlyphs[state->caretPos-1].str]))
+					state->caretPos--;
+			} else {
+				if (state->caretPos > 0)
+					state->caretPos--;
+			}
+			if (hit->mods & 1) { // Shift
+				state->selStart = mini(state->caretPos, state->selPivot);
+				state->selEnd = maxi(state->caretPos, state->selPivot);
+			} else {
+				if (state->selStart != state->selEnd)
+					state->caretPos = state->selStart;
+				state->selStart = state->selEnd = 0;
+				state->selPivot = -1;
+			}
+		} else if (hit->code == 262) {
+			// Right
+			if (hit->mods & 1) { // Shift
+				if (state->selPivot == -1)
+					state->selPivot = state->caretPos;
+			}
+			if (hit->mods & 4) { // Alt
+				// Next word
+				while (state->caretPos < state->nglyphs && isSpace(stateText[(int)stateGlyphs[state->caretPos].str]))
+					state->caretPos++;
+				while (state->caretPos < state->nglyphs && !isSpace(stateText[(int)stateGlyphs[state->caretPos].str]))
+					state->caretPos++;
+			} else {
+				if (state->caretPos < state->nglyphs)
+					state->caretPos++;
+			}
+			if (hit->mods & 1) { // Shift
+				state->selStart = mini(state->caretPos, state->selPivot);
+				state->selEnd = maxi(state->caretPos, state->selPivot);
+			} else {
+				if (state->selStart != state->selEnd)
+					state->caretPos = state->selEnd;
+				state->selStart = state->selEnd = 0;
+				state->selPivot = -1;
+			}
+		} else if (hit->code == 259) {
+			// Delete
+			int del = 0, count = 0;
+			if (state->selStart != state->selEnd) {
+				del = state->selStart;
+				count = state->selEnd - state->selStart;
+				state->caretPos = state->selStart;
+			} else if (state->caretPos > 0) {
+				if (state->caretPos < state->nglyphs) {
+					del = (int)stateGlyphs[state->caretPos-1].str;
+					count = (int)stateGlyphs[state->caretPos].str - (int)stateGlyphs[state->caretPos-1].str;
+					state->caretPos--;
+				} else {
+					del = (int)stateGlyphs[state->nglyphs-1].str;
+					count = (int)strlen(stateText) - (int)stateGlyphs[state->nglyphs-1].str;
+					state->caretPos = state->nglyphs-1;
+				}
+			}
+
+			if (count > 0) {
+				deleteText(stateText, state->maxText, del, count);
+				state->nglyphs = measureTextGlyphs(w, stateText, stateGlyphs, maxText);
+				// Store result
+				mgSetResultStr(w->id, stateText, state->maxText);
+
+				state->selStart = state->selEnd = 0;
+				state->selPivot = -1;
+			}
+		} else if (hit->code == 257) {
+			// Enter
+			mgSetResultStr(w->id, stateText, state->maxText);
+			mgBlur(w->id);
+		}
 	}
 	if (event == MG_KEYRELEASED) {
-		printf("%d released: %d\n", w->id, hit->code);
+//		printf("%d released: %d\n", w->id, hit->code);
 	}
 	if (event == MG_CHARTYPED) {
+		int ins;
 		char str[8];
+
+		// Delete selection
+		if (state->selStart != state->selEnd) {
+			int del = 0, count = 0;
+			del = state->selStart;
+			count = state->selEnd - state->selStart;
+			state->caretPos = state->selStart;
+			if (count > 0) {
+				deleteText(stateText, state->maxText, del, count);
+				state->nglyphs = measureTextGlyphs(w, stateText, stateGlyphs, maxText);
+				state->selStart = state->selEnd = 0;
+				state->selPivot = -1;
+			}
+		}
+
 		// Append
 		cpToUTF8(hit->code, str);
-		insertText(stateText, state->maxText, strlen(stateText), str, strlen(str));
+		if (state->caretPos >= 0 && state->caretPos < state->nglyphs)
+			ins = (int)stateGlyphs[state->caretPos].str;
+		else
+			ins = strlen(stateText);
+		insertText(stateText, state->maxText, ins, str, strlen(str));
+
+		state->nglyphs = measureTextGlyphs(w, stateText, stateGlyphs, maxText);
+		state->caretPos = mini(state->caretPos + strlen(str), state->nglyphs);
+
+		state->selStart = state->selEnd = 0;
+		state->selPivot = -1;
+
 		// Store result
 		mgSetResultStr(w->id, stateText, state->maxText);
 	}
-
-
-/*	switch (event) {
-	case MG_FOCUSED:	printf("%08x focused\n", w->id); break;
-	case MG_BLURRED:	printf("%08x blurred\n", w->id); break;
-	case MG_CLICKED:	printf("%08x clicked\n", w->id); break;
-	case MG_PRESSED:	printf("%08x pressed\n", w->id); break;
-	case MG_RELEASED:	printf("%08x released\n", w->id); break;
-	case MG_DRAGGED:	printf("%08x dragged\n", w->id); break;
-	case MG_ENTERED:	printf("%08x entered\n", w->id); break;
-	case MG_EXITED:		printf("%08x exited\n", w->id); break;
-	}*/
 }
 
 unsigned int mgInput(char* text, int maxText, struct MGopt* opts)
@@ -3548,32 +3744,47 @@ unsigned int mgInput(char* text, int maxText, struct MGopt* opts)
 
 unsigned int mgNumber(float* value, struct MGopt* opts)
 {
+	unsigned int h;
 	char str[32];
 	snprintf(str, sizeof(str), "%.2f", *value);
 	str[sizeof(str)-1] = '\0';
 
-	return mgInput(str, sizeof(str), mgOpts(mgTag("number"), mgWidth(DEFAULT_NUMBERW), opts));
+	h = mgInput(str, sizeof(str), mgOpts(mgTag("number"), mgWidth(DEFAULT_NUMBERW), opts));
+	if (mgChanged(h)) {
+		float num = 0.0f;
+		if (sscanf(str, "%f", &num))
+			*value = num;
+	}
+	return h;
 }
 
 unsigned int mgNumber3(float* x, float* y, float* z, const char* units, struct MGopt* opts)
 {
-	mgBoxBegin(MG_ROW, mgOpts(mgTag("number3"), opts));
-		mgNumber(x, mgOpts(mgGrow(1)));
-		mgNumber(y, mgOpts(mgGrow(1)));
-		mgNumber(z, mgOpts(mgGrow(1)));
+	unsigned int hx, hy, hz, h;
+	h = mgBoxBegin(MG_ROW, mgOpts(mgTag("number3"), opts));
+		hx = mgNumber(x, mgOpts(mgGrow(1)));
+		hy = mgNumber(y, mgOpts(mgGrow(1)));
+		hz = mgNumber(z, mgOpts(mgGrow(1)));
 		if (units != NULL && strlen(units) > 0)
 			mgLabel(units, mgOpts());
-	return mgBoxEnd();
+		if (mgChanged(hx) || mgChanged(hy) || mgChanged(hz))
+			mgSetResultInt(h, 1);
+	mgBoxEnd();
+	return h;
 }
 
 unsigned int mgColor(float* r, float* g, float* b, float* a, struct MGopt* opts)
 {
-	mgBoxBegin(MG_ROW, mgOpts(mgTag("color"), opts));
-		mgLabel("R", mgOpts()); mgNumber(r, mgOpts(mgGrow(1)));
-		mgLabel("G", mgOpts()); mgNumber(g, mgOpts(mgGrow(1)));
-		mgLabel("B", mgOpts()); mgNumber(b, mgOpts(mgGrow(1)));
-		mgLabel("A", mgOpts()); mgNumber(a, mgOpts(mgGrow(1)));
-	return mgBoxEnd();
+	unsigned int hr, hg, hb, ha, h;
+	h = mgBoxBegin(MG_ROW, mgOpts(mgTag("color"), opts));
+		mgLabel("R", mgOpts()); hr = mgNumber(r, mgOpts(mgGrow(1)));
+		mgLabel("G", mgOpts()); hg = mgNumber(g, mgOpts(mgGrow(1)));
+		mgLabel("B", mgOpts()); hb = mgNumber(b, mgOpts(mgGrow(1)));
+		mgLabel("A", mgOpts()); ha = mgNumber(a, mgOpts(mgGrow(1)));
+		if (mgChanged(hr) || mgChanged(hg) || mgChanged(hb) || mgChanged(ha))
+			mgSetResultInt(h, 1);
+	mgBoxEnd();
+	return h;
 }
 
 unsigned int mgCheckBox(const char* text, int* value, struct MGopt* opts)
@@ -3639,6 +3850,7 @@ unsigned int mgSelect(int* value, const char** choices, int nchoises, struct MGo
 		if (mgClicked(mgItem(choices[i], mgOpts()))) {
 			mgShowPopup(popup, 0);
 			*value = i;
+			mgSetResultInt(button, i);
 		}
 	}
 	mgPopupEnd();
@@ -3901,17 +4113,37 @@ int mgReleased(unsigned int id)
 	return context.released == id ? 1 : 0;
 }
 
-int mgActive(unsigned int id)
+int mgIsActive(unsigned int id)
 {
 	return context.active == id ? 1 : 0;
 }
 
-int mgHover(unsigned int id)
+int mgIsHover(unsigned int id)
 {
 	return context.hover == id ? 1 : 0;
 }
 
-int mgFocus(unsigned int id)
+int mgIsFocus(unsigned int id)
 {
 	return context.focus == id ? 1 : 0;
+}
+
+int mgChanged(unsigned int id)
+{
+	int i;
+	for (i = 0; i < outputResPoolSize; i++) {
+		if (outputResPool[i].id == id)
+			return 1;
+	}
+	return 0;
+}
+
+void mgFocus(unsigned int id)
+{
+	context.forceFocus = id;
+}
+
+void mgBlur(unsigned int id)
+{
+	context.forceBlur = id;
 }

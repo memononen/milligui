@@ -158,11 +158,78 @@ static void buttoncb(GLFWwindow* window, int button, int action, int mods)
 }
 
 
+
+/*
+
+ - templates
+ - variables
+ - collection
+ - events
+
+*/
+
+/*struct MIcell* createPanel()
+{
+	struct MIcell* panel = NULL;
+
+	panel = miBegin(miTemplate("id=panel #asd #asd #asd #materials"));
+		miBegin(miBox("id=panel dir=col align=justify padding='5 5' width=250 height=400"));
+			miText("id=header label='Materials' font-size=24 spacing=10");
+			miBegin(miBox("id=search dir=row align=justify padding='2 2' spacing=5"));
+				miIcon("id=search-icon icon=search");
+				miText("id=search-input label='Search' grow=1 paddingx=5");
+				miIcon("id=search-clear icon=cancel-circled");
+			miEnd();
+			
+			miCollection(Box("id=materials dir=col align=justify spacing=5"));
+
+			miBegin(Box("id=footer dir=row pack=end spacing=5");
+				miIconButton("id=footer-add icon=plus label=Add spacing=5");
+				miButton("id=footer-remove label=Remove spacing=5");
+			miEnd();
+			miSlider("id=slider padding='5 5' value=0.5 vmin=0 vmax=1 spacing=5");
+		miEnd();
+	miEnd();
+
+
+
+	char search[128];
+	miBegin(panel);
+		miSetStr("search-input", search);
+		if (miChanged("search-input"))
+			miGetStr("search-input", search, sizeof(search));
+			updateSearch(search);
+		}
+		if (miClicked("search-clear")) {
+			miBlur("search-input");
+			strcpy(search, "");
+		}
+
+		miCollectionBegin("materials");
+		for (i = 0; i < materialCount; i++) {
+			miBegin(materialItem);
+				miSetStr("name", materisl[i].name);
+				miSetFloat4("color", materisl[i].color);
+				if (miChanged("name") || miChanged("color")) {
+					miGetStr("name", materisl[i].name, sizeof(materisl[i].name));
+					miGetFloat4("color", materisl[i].color);
+					saveUndo();
+				}
+			miEnd();
+		}
+		miCollectionEnd();
+
+	miEnd();
+
+	return panel;
+}*/
+
 struct MIcell* createPanel()
 {
 	struct MIcell* panel = NULL;
 	struct MIcell* search = NULL;
 	struct MIcell* footer = NULL;
+	struct MIcell* list = NULL;
 	struct MIcell* button = NULL;
 
 	panel = miCreateBox("id=panel dir=col align=justify padding='5 5' width=250 height=400");
@@ -175,7 +242,9 @@ struct MIcell* createPanel()
 		miAddChild(search, miCreateIcon("id=search-clear icon=cancel-circled"));
 	miAddChild(panel, search);
 
-	miAddChild(panel, miCreateBox("id=list dir=col grow=1 spacing=5"));
+	list = miCreateBox("dir=col grow=1 spacing=5");
+//		miAddChild(list, miCreateCollection("id=list"));
+	miAddChild(panel, list);
 
 	footer = miCreateBox("id=footer dir=row pack=end spacing=5");
 		miAddChild(footer, miCreateIconButton("id=footer-add icon=plus label=Add spacing=5"));
@@ -317,6 +386,10 @@ int main()
 		
 /*		float s = slider;
 		if (miSync(panel, "slider", &s)) {
+			slider = s;
+		}
+
+		if (miValue(panel, "slider", &s)) {
 			slider = s;
 		}
 
