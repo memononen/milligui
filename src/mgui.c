@@ -308,6 +308,8 @@ struct MGcontext
 	float dt;
 
 	unsigned int forceFocus;
+	unsigned int focusNext;
+	unsigned int focusPrev;
 	unsigned int forceBlur;
 
 	unsigned int active;
@@ -1403,6 +1405,25 @@ static void dumpId(struct MGwidget* box, int indent)
 } 
 */
 
+static void getAdjacentStops(struct MGwidget* box, unsigned int id, unsigned int* prev, unsigned int* next, int* state, int indent)
+{
+	int i;
+	struct MGwidget* w = NULL;
+	for (w = box->children; w != NULL; w = w->next)
+		getAdjacentStops(w, id, prev, next, state, indent+1);
+	if (box->stop) {
+		if (box->id == id) {
+			(*state)++;
+		} else if ((*state) == 0) {
+			*prev = box->id;
+		} else if ((*state) == 1) {
+			*next = box->id;
+			(*state)++;
+			return;
+		}
+	}
+} 
+
 static void fireLogic(unsigned int id, int event, struct MGhit* hit)
 {
 	struct MGwidget* w = NULL;
@@ -1475,7 +1496,7 @@ static void updateLogic(const float* bounds)
 		context.timeSincePress = 0;
 	} else {
 		context.timeSincePress += minf(context.dt, 0.1f);
-	}	
+	}
 
 //	context.hover = 0;
 	context.focused = 0;
@@ -1503,6 +1524,31 @@ static void updateLogic(const float* bounds)
 			context.active = id;
 			context.pressed = id;
 		} else {
+
+			if (context.focusNext != 0) {
+				int state = 0;
+				unsigned int next = 0, prev = 0;
+				for (i = 0; i < context.panelCount; i++) {
+					if (context.panels[i]->active)
+						getAdjacentStops(context.panels[i], context.focusNext, &prev, &next, &state, 0);
+				}
+				if (next != 0)
+					context.forceFocus = next;
+				context.focusNext = 0;
+			}
+
+			if (context.focusPrev != 0) {
+				int state = 0;
+				unsigned int next = 0, prev = 0;
+				for (i = 0; i < context.panelCount; i++) {
+					if (context.panels[i]->active)
+						getAdjacentStops(context.panels[i], context.focusPrev, &prev, &next, &state, 0);
+				}
+				if (prev != 0)
+					context.forceFocus = prev;
+				context.focusPrev = 0;
+			}
+
 			if (context.forceFocus != 0) {
 				if (context.focus != context.forceFocus) {
 					context.blurred = context.focus;
@@ -3238,7 +3284,7 @@ unsigned int mgSlider(float* value, float vmin, float vmax, struct MGopt* opts)
 	val.value = *value;
 	val.vmin = vmin;
 	val.vmax = vmax;
-	mgSetValueBlock(canvas, (void**)&val, sizeof(struct MGsliderState));
+	mgSetValueBlock(canvas, (void*)&val, sizeof(struct MGsliderState));
 
 	// Get results
 	mgGetResultFloat(canvas, value);
@@ -3553,7 +3599,11 @@ static void inputLogic(void* uptr, struct MGwidget* w, int event, struct MGhit* 
 		memcpy(stateText, text, maxText);
 		state->maxText = maxText;
 		state->nglyphs = measureTextGlyphs(w, stateText, stateGlyphs, maxText);
-		state->caretPos = 0;
+		state->caretPos = state->nglyphs;
+		state->selStart = 0;
+		state->selEnd = state->nglyphs;
+		state->selPivot = -1;
+
 //		printf("%d focused\n", w->id);
 	}
 	if (event == MG_BLURRED) {
@@ -3663,6 +3713,14 @@ static void inputLogic(void* uptr, struct MGwidget* w, int event, struct MGhit* 
 				state->selStart = state->selEnd = 0;
 				state->selPivot = -1;
 			}
+		} else if (hit->code == 258) {
+			// Tab
+			mgSetResultStr(w->id, stateText, state->maxText);
+			if (hit->mods & 1)
+				mgFocusPrev(w->id);
+			else
+				mgFocusNext(w->id);
+
 		} else if (hit->code == 257) {
 			// Enter
 			mgSetResultStr(w->id, stateText, state->maxText);
@@ -3723,6 +3781,7 @@ unsigned int mgInput(char* text, int maxText, struct MGopt* opts)
 	opts = mgOpts(mgTag("input"), opts);
 	w->tag = getTag(opts);
 	w->style = computeStyle2(w, getState(w), opts, NULL);
+	w->stop = 1;
 
 	textSize(NULL, w->style.fontSize, NULL, &th);
 	w->cwidth = DEFAULT_TEXTW;
@@ -3735,7 +3794,6 @@ unsigned int mgInput(char* text, int maxText, struct MGopt* opts)
 	mgSetValueStr(w->id, text, maxText);
 
 	if (mgGetResultStr(w->id, &res, &resSize)) {
-		printf("res='%s'\n", res);
 		memcpy(text, res, mini(maxText, resSize));
 	}
 
@@ -4141,6 +4199,16 @@ int mgChanged(unsigned int id)
 void mgFocus(unsigned int id)
 {
 	context.forceFocus = id;
+}
+
+void mgFocusNext(unsigned int id)
+{
+	context.focusNext = id;
+}
+
+void mgFocusPrev(unsigned int id)
+{
+	context.focusPrev = id;
 }
 
 void mgBlur(unsigned int id)

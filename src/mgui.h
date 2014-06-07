@@ -164,7 +164,6 @@ struct MGhit {
 	int mods;
 	unsigned int code;
 	int clickCount;
-	unsigned char storage[128];
 
 	struct MGrect rect;
 	struct MGrect view;
@@ -218,6 +217,7 @@ struct MGwidget {
 	unsigned char dir;
 	unsigned char type;
 	unsigned char state;
+	unsigned char stop;
 
 	unsigned char active;
 	unsigned char bubble;
@@ -307,6 +307,9 @@ int mgIsHover(unsigned int id);
 int mgIsFocus(unsigned int id);
 
 void mgFocus(unsigned int id);
+void mgFocusNext(unsigned int id);
+void mgFocusPrev(unsigned int id);
 void mgBlur(unsigned int id);
+
 
 #endif // MGUI_H
