@@ -270,6 +270,7 @@ int main()
 	glfwSetTime(0);
 
 	MIcanvasState canvas = {0};
+	float value = 0.15f;
 
 	while (!glfwWindowShouldClose(window))
 	{
@@ -346,6 +347,9 @@ int main()
 			miPopupEnd();
 
 		miPopupEnd();
+
+		miSlider(&value, -1.0f, 1.0f);
+//		miSliderValue(&value, -1.0f, 1.0f);
 
 		miPanelBegin(250,250, 250,40);
 			miText("Another one...");

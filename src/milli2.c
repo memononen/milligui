@@ -199,12 +199,13 @@ static void* mi__getState(MIhandle handle, int attr, int size)
 
 static void mi__garbageCollectState()
 {
-	int i, n = 0, offset = 0;
+	int i, n = 0, offset = 0, touch, freed = 0;
 	MIstateBlock* state;
-//	printf("states before: %d\n", g_context.statePoolSize);
 	for (i = 0; i < g_context.statePoolSize; i++) {
 		state = &g_context.statePool[i];
-		if (state->touch) {
+		touch = state->touch;
+		state->touch = 0;
+		if (touch) {
 			if (offset != state->offset) {
 				memmove(&g_context.stateMem[offset], &g_context.stateMem[state->offset], state->size);
 				state->offset = offset;
@@ -213,10 +214,16 @@ static void mi__garbageCollectState()
 			if (n != i)
 				g_context.statePool[n] = g_context.statePool[i];
 			n++;
+		} else {
+			printf("freeing %x size=%d\n", state->handle, state->size);
+			freed = 1;
 		}
 	}
+	if (freed) {
+		printf("after free: %d->%d  mem: %d->%d\n", g_context.statePoolSize, n, g_context.stateMemSize, offset);
+	}
 	g_context.statePoolSize = n;
-//	printf(" - after: %d\n", g_context.statePoolSize);
+	g_context.stateMemSize = offset;
 }
 
 static char* mi__allocText(const char* text, int len)
@@ -653,6 +660,16 @@ static MIrect mi__layoutRect(MIpanel* panel, MIsize content, float spacing)
 	return rect;
 }
 
+void miGridBegin(int count, float* widths, float spacing)
+{
+
+}
+
+void miGridEnd()
+{
+	
+}
+
 MIhandle miPanelBegin(float x, float y, float width, float height)
 {
 	MIpanel* panel = mi__allocPanel();
@@ -703,6 +720,13 @@ int miClicked(MIhandle handle)
 	return g_context.clicked == handle;
 }
 
+MIpoint miMousePos()
+{
+	MIpoint pos;
+	pos.x = g_context.input.mx;
+	pos.y = g_context.input.my;
+	return pos;
+}
 
 #define BUTTON_HEIGHT 32
 #define BUTTON_PADDING 16
@@ -716,8 +740,10 @@ static int mi__hitTest(MIpanel* panel, struct MIrect rect)
 
 static void mi__buttonLogic(int over, MIhandle handle)
 {
-	if (over)
-		g_context.nextHover = handle;
+	if (over) {
+		if (g_context.active == 0 || g_context.active == handle)
+			g_context.nextHover = handle;
+	}
 
 	if (g_context.input.mbut & MI_MOUSE_PRESSED) {
 		if (g_context.active == 0 && g_context.hover == handle) {
@@ -789,6 +815,102 @@ MIhandle miText(const char* text)
 	mi__drawText(panel, box->rect.x, box->rect.y, box->rect.width, box->rect.height, text, miRGBA(255,255,255,255), NVG_ALIGN_LEFT|NVG_ALIGN_MIDDLE, MI_FONT_NORMAL, TEXT_FONT_SIZE);
 
 	return box->handle;
+}
+
+
+#define SLIDER_WIDTH 100
+#define SLIDER_HEIGHT 28
+#define SLIDER_HANDLE 16
+
+struct MIsliderState {
+	float startValue;
+	float origValue;
+};
+typedef struct MIsliderState MIsliderState;
+
+static MIrect handleRect(MIrect rect, float hsize, float value, float vmin, float vmax)
+{
+	MIrect res;
+	float u = mi__clampf((value - vmin) / (vmax - vmin), 0, 1);
+	res.x = rect.x + mi__maxf(0, rect.width - hsize) * u;
+	res.y = rect.y + rect.height/2 - hsize/2;
+	res.width = hsize;
+	res.height = hsize;
+	return res;
+}
+
+static float mapXToValue(float x, MIrect rect, float hsize, float vmin, float vmax)
+{
+	float xrange = mi__maxf(0, rect.width - hsize);
+	float leftx = rect.x + hsize/2;
+	if (xrange < 0.5f) return vmin;
+	float u = mi__clampf((x - leftx) / xrange, 0, 1);
+	return vmin + (vmax-vmin)*u;
+}
+
+MIhandle miSlider(float* value, float vmin, float vmax)
+{
+	MIsize content;
+	MIbox* box = NULL;
+	MIrect hrect;
+	MIpanel* panel = mi__curPanel();
+	if (panel == NULL) return 0;
+	box = mi__allocBox();
+	if (box == NULL) return 0;
+
+	box->handle = mi__allocHandle(panel);
+
+	content.width = SLIDER_WIDTH;
+	content.height = SLIDER_HEIGHT;
+
+	box->rect = mi__layoutRect(panel, content, LAYOUT_SPACING);
+
+	hrect = handleRect(box->rect, SLIDER_HANDLE, *value, vmin, vmax);
+
+	mi__buttonLogic(mi__hitTest(panel, box->rect), box->handle);
+
+	if (miPressed(box->handle)) {
+		MIsliderState* slider = (MIsliderState*)mi__getState(box->handle, 0, sizeof(MIsliderState));
+		if (slider != NULL) {
+			MIpoint mouse = miMousePos();
+			float mval = mapXToValue(mouse.x, box->rect, SLIDER_HANDLE, vmin, vmax);
+			if (mouse.x < hrect.x || mouse.x > hrect.x+hrect.width)
+				*value = mval;
+			slider->startValue = mval;
+			slider->origValue = *value;
+		}
+	}
+	if (miActive(box->handle)) {
+		MIsliderState* slider = (MIsliderState*)mi__getState(box->handle, 0, sizeof(MIsliderState));
+		if (slider != NULL) {
+			MIpoint mouse = miMousePos();
+			float delta = mapXToValue(mouse.x, box->rect, SLIDER_HANDLE, vmin, vmax) - slider->startValue;
+			*value = mi__clampf(slider->origValue + delta, vmin, vmax);
+		}
+	}
+
+//	mi__drawRect(panel, box->rect.x, box->rect.y, box->rect.width, box->rect.height, miRGBA(255,0,0,32));
+
+	mi__drawRect(panel, box->rect.x, hrect.y+SLIDER_HANDLE/2-1, box->rect.width, 2, miRGBA(255,255,255,128));
+	if ((hrect.x - box->rect.x) > 0.5f)
+		mi__drawRect(panel, box->rect.x, hrect.y+SLIDER_HANDLE/2-1, hrect.x - box->rect.x, 2, miRGBA(0,192,255,255));
+	mi__drawRect(panel, hrect.x, hrect.y, hrect.width, hrect.height, miRGBA(255,255,255,255));
+
+
+//	mi__drawText(panel, box->rect.x, box->rect.y, box->rect.width, box->rect.height, text, miRGBA(255,255,255,255), NVG_ALIGN_LEFT|NVG_ALIGN_MIDDLE, MI_FONT_NORMAL, TEXT_FONT_SIZE);
+
+	return box->handle;
+}
+
+MIhandle miSliderValue(float* value, float vmin, float vmax)
+{
+	char num[32];
+	float widths[2] = {200, 50};
+	snprintf(num,32,"%.2f", *value);
+	miGridBegin(2, widths, LAYOUT_SPACING);
+	miSlider(value, vmin, vmax);
+	miText(num);
+	miGridEnd();
 }
 
 void miPopupShow(MIhandle handle)

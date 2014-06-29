@@ -129,9 +129,16 @@ int miActive(MIhandle handle);
 int miPressed(MIhandle handle);
 int miReleased(MIhandle handle);
 int miClicked(MIhandle handle);
+MIpoint miMousePos();
 
 MIhandle miButton(const char* label);
 MIhandle miText(const char* text);
+MIhandle miSlider(float* value, float vmin, float vmax);
+
+MIhandle miSliderValue(float* value, float vmin, float vmax);
+
+void miGridBegin(int count, float* widths, float spacing);
+void miGridEnd();
 
 enum MIpopupSide {
 	MI_RIGHT,
@@ -142,8 +149,6 @@ enum MIpopupLogic {
 	MI_ONCLICK,
 	MI_ONHOVER,
 };
-
-void miAttachPopup(MIpopupState* popup, MIhandle base, int side, int logic);
 
 MIhandle miPopupBegin(MIhandle base, int logic, int side);
 MIhandle miPopupEnd();
