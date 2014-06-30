@@ -349,7 +349,16 @@ int main()
 		miPopupEnd();
 
 		miSlider(&value, -1.0f, 1.0f);
-//		miSliderValue(&value, -1.0f, 1.0f);
+		miSliderValue(&value, -1.0f, 1.0f);
+		miText("Foobar");
+
+		float flex[] = {1,4};
+		miGridBegin(2, flex, 0);
+			miButton("Tab 1");
+			miButton("Tab 2");
+			miButton("Tab 3");
+			miButton("Tab 4");
+		miGridEnd();
 
 		miPanelBegin(250,250, 250,40);
 			miText("Another one...");
