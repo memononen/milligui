@@ -352,13 +352,44 @@ int main()
 		miSliderValue(&value, -1.0f, 1.0f);
 		miText("Foobar");
 
-		float divs[] = {1,4};
-		miDivsBegin(MI_ROW, divs, 2, 0);
+		float divs[] = {50,100};
+		miDivsBegin(MI_ROW, divs, 2, 30, 5);
 			miButton("Tab 1");
 			miButton("Tab 2");
+
+			miDivsBegin(MI_COL, divs, 2, 30, 0);
+				miButton("Tab 4.1");
+				miDivsBegin(MI_ROW, divs, 2, 30, 0);
+					miButton("Tab 4.2.1");
+					miButton("Tab 4.2.2");
+					miButton("Tab 4.2.3");
+				miDivsEnd();
+			miDivsEnd();
+
 			miButton("Tab 3");
-			miButton("Tab 4");
+
+			miButton("Tab 5");
+			miStackBegin(MI_COL, 30, 5);
+				miText("Tab 6.1");
+				miStackBegin(MI_ROW, 30, 5);
+					miText("Tab 6.2.1");
+					miText("Tab 6.2.2");
+					miText("Tab 6.2.3");
+				miStackEnd();
+				miText("Tab 6.3");
+			miStackEnd();
+
 		miDivsEnd();
+
+		miText("Foofoo");
+
+		miButtonRowBegin(4);
+			miButton("A");
+			miButton("B");
+			miButton("C");
+			miButton("D");
+		miButtonRowEnd();
+
 
 		miPanelBegin(250,250, 250,40);
 			miText("Another one...");

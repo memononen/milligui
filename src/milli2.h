@@ -137,8 +137,14 @@ MIhandle miSlider(float* value, float vmin, float vmax);
 
 MIhandle miSliderValue(float* value, float vmin, float vmax);
 
-void miDivsBegin(int dir, float* widths, int count, float spacing);
-void miDivsEnd();
+MIhandle miDivsBegin(int dir, float* divs, int count, float height, float spacing);
+MIhandle miDivsEnd();
+
+MIhandle miStackBegin(int dir, float height, float spacing);
+MIhandle miStackEnd();
+
+MIhandle miButtonRowBegin(int count);
+MIhandle miButtonRowEnd();
 
 enum MIpopupSide {
 	MI_RIGHT,

@@ -88,6 +88,8 @@ struct MIlayout {
 	float cellWidths[MAX_LAYOUT_CELLS];
 	int cellCount;
 	int cellIndex;
+	int depth;
+	MIhandle handle;
 };
 typedef struct MIlayout MIlayout;
 
@@ -295,6 +297,17 @@ static void mi__addShape(MIpanel* panel, MIshape* shape)
 		panel->shapesTail = shape;
 	}
 }
+
+static MIbox* mi__getBoxByHandle(MIhandle handle)
+{
+	int i;
+	for (i = 0; i < g_context.boxPoolSize; i++) {
+		if (g_context.boxPool[i].handle == handle)
+			return &g_context.boxPool[i];
+	}
+	return NULL;
+}
+
 
 static void mi__drawRect(MIpanel* panel, float x, float y, float width, float height, MIcolor col)
 {
@@ -634,6 +647,7 @@ static MIlayout* mi__pushLayout(MIpanel* panel)
 		return NULL;
 	ret = &panel->layoutStack[panel->layoutStackCount];
 	memset(ret, 0, sizeof(*ret));
+	ret->depth = panel->layoutStackCount;
 	panel->layoutStackCount++;
 	return ret;
 } 
@@ -651,7 +665,7 @@ static MIlayout* mi__popLayout(MIpanel* panel)
 	return &panel->layoutStack[panel->layoutStackCount];
 }
 
-static void mi__initLayout(MIpanel* panel, int dir, float x, float y, float width, float height)
+static void mi__initLayout(MIpanel* panel, int dir, float x, float y, float width, float height, float spacing)
 {
 	MIlayout* layout = NULL;
 
@@ -664,7 +678,7 @@ static void mi__initLayout(MIpanel* panel, int dir, float x, float y, float widt
 	layout = mi__pushLayout(panel); 
 	if (layout == NULL) return;
 	layout->dir = dir;
-	layout->spacing = 0;
+	layout->spacing = spacing;
 	layout->rect = panel->rect;
 	layout->space.x = layout->rect.x + PANEL_PADDING;
 	layout->space.y = layout->rect.y + PANEL_PADDING;
@@ -680,16 +694,20 @@ static void mi__initLayout(MIpanel* panel, int dir, float x, float y, float widt
 			layout->rect.height = DEFAULT_HEIGHT;
 		layout->space.height = mi__maxf(0, layout->rect.height - PANEL_PADDING*2);
 	}
+
+//	printf("init layout\n");
 }
 
-static MIrect mi__layoutRect(MIpanel* panel, MIsize content, float spacing)
+static MIrect mi__layoutRect(MIpanel* panel, MIlayout* layout, MIsize content)
 {
 	MIrect rect = {0,0,0,0};
-	MIlayout* layout = mi__getLayout(panel);
+	if (layout == NULL) layout = mi__getLayout(panel);
 	if (layout == NULL) return rect;
 
 	if (layout->cellCount > 0) {
 		// Stacking
+//		printf("%*s  - div %d/%d\n", layout->depth*2, "", layout->cellIndex,layout->cellCount);
+
 		if (layout->dir == MI_COL) {
 /*			rect.x = layout->space.x;
 			rect.y = layout->space.y + layout->space.height;
@@ -697,66 +715,223 @@ static MIrect mi__layoutRect(MIpanel* panel, MIsize content, float spacing)
 			rect.height = mi__maxf(0, layout->cellWidths[layout->cellIndex] - spacing);
 			layout->space.height += layout->cellWidths[layout->cellIndex];
 			layout->spacing = spacing;*/
-		} else {
-			// Row
-			float spaceStart = layout->spacing/2;
-			float spaceEnd = layout->cellIndex < layout->cellCount-1 ? spacing/2 : 0;
-			rect.x = layout->space.x + layout->space.width + spaceStart;
-			rect.y = layout->space.y;
-			rect.width = mi__maxf(0, layout->cellWidths[layout->cellIndex] - spaceStart - spaceEnd);
-			rect.height = content.height;
-			layout->space.height = mi__maxf(layout->space.height, content.height);
-			layout->space.width += layout->cellWidths[layout->cellIndex];
-			layout->spacing = spacing;
+
+			if (layout->cellIndex >= layout->cellCount) {
+				layout->cellIndex = 0;
+				layout->space.x += layout->spacing + layout->space.width;
+				layout->space.width = 0;
+				layout->space.height = 0;
+			}
+
+			// Col
+			float spaceStart = layout->cellIndex > 0 ? layout->spacing/2 : 0;
+			float spaceEnd = layout->cellIndex < layout->cellCount-1 ? layout->spacing/2 : 0;
+			rect.x = layout->space.x;
+			rect.y = layout->space.y + layout->space.height + spaceStart;
+			rect.width = layout->rect.width;
+			rect.height = mi__maxf(0, layout->cellWidths[layout->cellIndex] - spaceStart - spaceEnd);
+			layout->space.width = mi__maxf(layout->space.width, rect.width);
+			layout->space.height += layout->cellWidths[layout->cellIndex];
 
 //			mi__drawRect(panel, rect.x+2, rect.y+2, rect.width-4, rect.height-4, miRGBA(255,192,0,32));
 
 			layout->cellIndex++;
+
+		} else {
+
 			if (layout->cellIndex >= layout->cellCount) {
 				layout->cellIndex = 0;
-				layout->space.y += LAYOUT_SPACING + layout->space.height;
+				layout->space.y += layout->spacing + layout->space.height;
 				layout->space.width = 0;
 				layout->space.height = 0;
-				layout->spacing = 0;
 			}
+
+			// Row
+			float spaceStart = layout->cellIndex > 0 ? layout->spacing/2 : 0;
+			float spaceEnd = layout->cellIndex < layout->cellCount-1 ? layout->spacing/2 : 0;
+			rect.x = layout->space.x + layout->space.width + spaceStart;
+			rect.y = layout->space.y;
+			rect.width = mi__maxf(0, layout->cellWidths[layout->cellIndex] - spaceStart - spaceEnd);
+			rect.height = layout->rect.height;
+			layout->space.height = mi__maxf(layout->space.height, rect.height);
+			layout->space.width += layout->cellWidths[layout->cellIndex];
+
+//			mi__drawRect(panel, rect.x+2, rect.y+2, rect.width-4, rect.height-4, miRGBA(255,192,0,32));
+
+			layout->cellIndex++;
 		}
 	} else {
 		// Stacking
+//		printf("%*s  - stack\n", layout->depth*2, "");
 		if (layout->dir == MI_COL) {
 			rect.x = layout->space.x;
-			rect.y = layout->space.y + layout->space.height + layout->spacing;
+			rect.y = layout->space.y + layout->space.height;
+			if (layout->space.height > 0) rect.y += layout->spacing;
 			rect.width = layout->space.width;
 			rect.height = content.height;
-			layout->space.height += layout->spacing + content.height;
-			layout->spacing = spacing;
+			layout->space.height = rect.y + rect.height - layout->space.y;
 		} else {
-			rect.x = layout->space.x + layout->space.width + layout->spacing;
+			rect.x = layout->space.x + layout->space.width;
 			rect.y = layout->space.y;
-			rect.width = content.width; // content.width;
+			if (layout->space.width > 0) rect.x += layout->spacing;
+			rect.width = content.width;
 			rect.height = layout->space.height;
-			layout->space.width += layout->spacing + content.width;
-			layout->spacing = spacing;
+			layout->space.width = rect.x + rect.width - layout->space.x;
 		}
 	}
 
 	return rect;
 }
 
-void miDivsBegin(int dir, float* widths, int count, float spacing)
+MIhandle miStackBegin(int dir, float height, float spacing)
 {
-	int i;
-	float total = 0.0f, avail = 1.0f;
+	MIbox* box;
 	MIlayout* layout;
 	MIlayout* prevLayout;
 	MIpanel* panel = mi__curPanel();
-	if (panel == NULL) return;
+	if (panel == NULL) return 0;
 	prevLayout = mi__getLayout(panel);
-	if (prevLayout == NULL) return;
+	if (prevLayout == NULL) return 0;
 	layout = mi__pushLayout(panel);
-	if (layout == NULL) return;
+	if (layout == NULL) return 0;
+	box = mi__allocBox();
+	if (box == NULL) return 0;
+
+	MIsize content;
+	if (dir == MI_COL) {
+		content.width = height;
+		content.height = DEFAULT_HEIGHT;
+	} else {
+		content.width = DEFAULT_WIDTH;
+		content.height = height;
+	}
+
+	MIrect rect = mi__layoutRect(panel, prevLayout, content);
+
+	layout->dir = dir;
+	layout->rect = rect;
+	layout->spacing = spacing;
+
+	mi__drawRect(panel, layout->rect.x+2, layout->rect.y+2, layout->rect.width-4, layout->rect.height-4, miRGBA(255,0,192,32));
+
+	layout->space.x = layout->rect.x;
+	layout->space.y = layout->rect.y;
+	layout->space.width = 0;
+	layout->space.height = 0;
+
+	if (layout->dir == MI_COL) {
+		layout->space.width = layout->rect.width;
+	} else {
+		layout->space.height = layout->rect.height;
+	}
+
+	box->rect = layout->rect;
+
+	return layout->handle;
+}
+
+MIhandle miStackEnd()
+{
+	float w, h;
+	MIbox* box;
+	MIlayout* prevLayout;
+	MIlayout* layout;
+	MIpanel* panel = mi__curPanel();
+	if (panel == NULL) return 0;
+	prevLayout = mi__popLayout(panel);	// this can mismatch, see how to signal if begin failed.
+	if (prevLayout == NULL) { printf("no prev\n"); return 0; }
+	layout = mi__getLayout(panel);
+	if (layout == NULL) { printf("no cur\n"); return 0; }
+	box = mi__getBoxByHandle(prevLayout->handle);
+	if (box == NULL) return 0;
+
+//	printf("%*s}\n", prevLayout->depth*2, "");
+
+	// Carry allocations from previous to current.
+	if (layout->cellCount > 0) {
+
+		h = (prevLayout->space.y + prevLayout->space.height) - layout->space.y;
+		//printf("%*s  - COL%s prev=%f cur=%f %f->%f\n", layout->depth*2, "", layout->cellCount ? "*":"", (prevLayout->space.y+prevLayout->space.height), (layout->space.y+layout->space.height), layout->space.height, h);
+		if (h > layout->space.height)
+			layout->space.height = h;
+
+		w = (prevLayout->space.x + prevLayout->space.width) - layout->space.x;
+		//printf("%*s  - ROW%s prev=%f cur=%f %f->%f\n", layout->depth*2, "", layout->cellCount ? "*":"", (prevLayout->space.x+prevLayout->space.width), (layout->space.x+layout->space.width), layout->space.width, w);
+		if (w > layout->space.width)
+			layout->space.width = w;
+
+	} else {
+		if (layout->dir == MI_COL) {
+			h = (prevLayout->space.y + prevLayout->space.height) - layout->space.y;
+			//printf("%*s  - COL%s prev=%f cur=%f %f->%f\n", layout->depth*2, "", layout->cellCount ? "*":"", (prevLayout->space.y+prevLayout->space.height), (layout->space.y+layout->space.height), layout->space.height, h);
+			if (h > layout->space.height)
+				layout->space.height = h;
+		} else {
+			w = (prevLayout->space.x + prevLayout->space.width) - layout->space.x;
+			//printf("%*s  - ROW%s prev=%f cur=%f %f->%f\n", layout->depth*2, "", layout->cellCount ? "*":"", (prevLayout->space.x+prevLayout->space.width), (layout->space.x+layout->space.width), layout->space.width, w);
+			if (w > layout->space.width)
+				layout->space.width = w;
+		}
+	}
+
+//	mi__drawRect(panel, prevLayout->space.x, prevLayout->space.y, prevLayout->space.width, prevLayout->space.height, miRGBA(0,255,0,32));
+//	mi__drawRect(panel, layout->space.x, layout->space.y, layout->space.width, layout->space.height, miRGBA(0,0,255,32));
+		
+//	mi__drawRect(panel, layout->space.x, layout->space.y, layout->space.width, layout->space.height, miRGBA(255,255,255,32));
+
+	box->rect.width = mi__maxf(box->rect.width, prevLayout->space.width); 
+	box->rect.height = mi__maxf(box->rect.height, prevLayout->space.height); 
+
+	return layout->handle;
+}
+
+
+MIhandle miDivsBegin(int dir, float* widths, int count, float height, float spacing)
+{
+	int i;
+	float total = 0.0f, avail = 1.0f;
+	MIbox* box;
+	MIlayout* layout;
+	MIlayout* prevLayout;
+	MIpanel* panel = mi__curPanel();
+	if (panel == NULL) return 0;
+	prevLayout = mi__getLayout(panel);
+	if (prevLayout == NULL) return 0;
+	layout = mi__pushLayout(panel);
+	if (layout == NULL) return 0;
+	box = mi__allocBox();
+	if (box == NULL) return 0;
+
+	box->handle = mi__allocHandle(panel);
+	layout->handle = box->handle;
+
+	if (widths != NULL) {
+		for (i = 0; i < count; i++)
+			total += mi__maxf(0.0f, widths[i]);
+	} else {
+		total = (dir == MI_COL) ? DEFAULT_HEIGHT * count : DEFAULT_WIDTH * count;
+	}
+
+	MIsize content;
+	if (dir == MI_COL) {
+		content.width = height;
+		content.height = total;
+	} else {
+		content.width = total;
+		content.height = height;
+	}
+
+	MIrect rect = mi__layoutRect(panel, prevLayout, content);
+
+//	printf("layout: (%fx%f) -> (%fx%f)\n", content.width, content.height, rect.width, rect.height);
+
+	layout->dir = dir;
+	layout->rect = rect;
+	layout->spacing = spacing;
 
 	layout->cellCount = mi__clampi(count, 1, MAX_LAYOUT_CELLS);
 	layout->cellIndex = 0;
+	total = 0;
 	if (widths != NULL) {
 		for (i = 0; i < layout->cellCount; i++) {
 			layout->cellWidths[i] = widths[i];
@@ -769,22 +944,20 @@ void miDivsBegin(int dir, float* widths, int count, float spacing)
 		}
 	}
 
-	layout->dir = dir;
-
+/*
 	if (layout->dir == MI_COL) {
-		layout->rect.x = prevLayout->space.x;
-		layout->rect.y = prevLayout->space.y + prevLayout->space.height + prevLayout->spacing;
+		layout->rect.x = prevLayout->space.x + prevLayout->space.width + prevLayout->spacing;
+		layout->rect.y = prevLayout->space.y;
 		layout->rect.width = 2;
 		layout->rect.height = prevLayout->space.height;
 	} else {
-		layout->dir = MI_ROW;
 		layout->rect.x = prevLayout->space.x;
 		layout->rect.y = prevLayout->space.y + prevLayout->space.height + prevLayout->spacing;
 		layout->rect.width = prevLayout->space.width;
 		layout->rect.height = 2;
-	}
+	}*/
 
-//	mi__drawRect(panel, layout->rect.x, layout->rect.y, layout->rect.width, layout->rect.height, miRGBA(255,192,0,32));
+	mi__drawRect(panel, layout->rect.x+2, layout->rect.y+2, layout->rect.width-4, layout->rect.height-4, miRGBA(255,192,0,32));
 
 	layout->space.x = layout->rect.x;
 	layout->space.y = layout->rect.y;
@@ -792,13 +965,13 @@ void miDivsBegin(int dir, float* widths, int count, float spacing)
 	layout->space.height = 0;
 	if (layout->dir == MI_COL) {
 		// Column
-		if (layout->rect.height < 1.0f)
-			layout->rect.height = DEFAULT_HEIGHT;
+//		if (layout->rect.height < 1.0f)
+//			layout->rect.height = DEFAULT_HEIGHT;
 		avail = layout->rect.height;
 	} else {
 		// Row
-		if (layout->rect.width < 1.0f)
-			layout->rect.width = DEFAULT_WIDTH;
+//		if (layout->rect.width < 1.0f)
+//			layout->rect.width = DEFAULT_WIDTH;
 		avail = layout->rect.width;
 	}
 
@@ -808,31 +981,71 @@ void miDivsBegin(int dir, float* widths, int count, float spacing)
 //		printf("%f ", layout->cellWidths[i]);
 	}
 //	printf("\n");
+
+	box->rect = layout->rect;
+
+	return box->handle;
+//	printf("%*sbegin {\n", layout->depth*2, "");
 }
 
-void miDivsEnd()
+MIhandle miDivsEnd()
 {
+	float w, h;
+	MIbox* box;
 	MIlayout* prevLayout;
 	MIlayout* layout;
 	MIpanel* panel = mi__curPanel();
-	if (panel == NULL) return;
+	if (panel == NULL) return 0;
 	prevLayout = mi__popLayout(panel);	// this can mismatch, see how to signal if begin failed.
-	if (prevLayout == NULL) return;
-	layout = mi__getLayout(panel);	// this can mismatch, see how to signal if begin failed.
-	if (layout == NULL) return;
+	if (prevLayout == NULL) { printf("no prev\n"); return 0; }
+	layout = mi__getLayout(panel);
+	if (layout == NULL) { printf("no cur\n"); return 0; }
+	box = mi__getBoxByHandle(prevLayout->handle);
+	if (box == NULL) return 0;
+
+//	printf("%*s}\n", prevLayout->depth*2, "");
 
 	// Carry allocations from previous to current.
-	if (layout->dir == MI_COL) {
-		float h = (prevLayout->space.y + prevLayout->space.height + LAYOUT_SPACING) - layout->space.y;
-//		printf("prev.y=%f prev.h=%f cur.y=%f -> %f\n", prevLayout->space.y, prevLayout->space.height, layout->space.y, h);
+/*	h = (prevLayout->space.y + prevLayout->space.height) - layout->space.y;
+	//printf("%*s  - COL%s prev=%f cur=%f %f->%f\n", layout->depth*2, "", layout->cellCount ? "*":"", (prevLayout->space.y+prevLayout->space.height), (layout->space.y+layout->space.height), layout->space.height, h);
+	if (h > layout->space.height)
 		layout->space.height = h;
-		layout->spacing = 0; // TODO
+
+	w = (prevLayout->space.x + prevLayout->space.width) - layout->space.x;
+	//printf("%*s  - ROW%s prev=%f cur=%f %f->%f\n", layout->depth*2, "", layout->cellCount ? "*":"", (prevLayout->space.x+prevLayout->space.width), (layout->space.x+layout->space.width), layout->space.width, w);
+	if (w > layout->space.width)
+		layout->space.width = w;*/
+
+	if (layout->cellCount > 0) {
+
+		h = (prevLayout->space.y + prevLayout->space.height) - layout->space.y;
+		//printf("%*s  - COL%s prev=%f cur=%f %f->%f\n", layout->depth*2, "", layout->cellCount ? "*":"", (prevLayout->space.y+prevLayout->space.height), (layout->space.y+layout->space.height), layout->space.height, h);
+		if (h > layout->space.height)
+			layout->space.height = h;
+
+		w = (prevLayout->space.x + prevLayout->space.width) - layout->space.x;
+		//printf("%*s  - ROW%s prev=%f cur=%f %f->%f\n", layout->depth*2, "", layout->cellCount ? "*":"", (prevLayout->space.x+prevLayout->space.width), (layout->space.x+layout->space.width), layout->space.width, w);
+		if (w > layout->space.width)
+			layout->space.width = w;
+
 	} else {
-		float w = (prevLayout->space.x + prevLayout->space.width + LAYOUT_SPACING) - layout->space.x;
-//		printf("prev.x=%f prev.w=%f cur.x=%f -> %f\n", prevLayout->space.x, prevLayout->space.width, layout->space.x, w);
-		layout->space.width = w;
-		layout->spacing = 0; // TODO
+		if (layout->dir == MI_COL) {
+			h = (prevLayout->space.y + prevLayout->space.height) - layout->space.y;
+			//printf("%*s  - COL%s prev=%f cur=%f %f->%f\n", layout->depth*2, "", layout->cellCount ? "*":"", (prevLayout->space.y+prevLayout->space.height), (layout->space.y+layout->space.height), layout->space.height, h);
+			if (h > layout->space.height)
+				layout->space.height = h;
+		} else {
+			w = (prevLayout->space.x + prevLayout->space.width) - layout->space.x;
+			//printf("%*s  - ROW%s prev=%f cur=%f %f->%f\n", layout->depth*2, "", layout->cellCount ? "*":"", (prevLayout->space.x+prevLayout->space.width), (layout->space.x+layout->space.width), layout->space.width, w);
+			if (w > layout->space.width)
+				layout->space.width = w;
+		}
 	}
+
+	box->rect.width = mi__maxf(box->rect.width, prevLayout->space.width); 
+	box->rect.height = mi__maxf(box->rect.height, prevLayout->space.height); 
+
+	return prevLayout->handle;
 }
 
 MIhandle miPanelBegin(float x, float y, float width, float height)
@@ -847,7 +1060,7 @@ MIhandle miPanelBegin(float x, float y, float width, float height)
 	mi__pushPanel(panel);
 
 	mi__drawRect(panel, x, y, width, height, g_context.hoverPanel == panel->handle ? miRGBA(0,0,0,192) : miRGBA(0,0,0,128));
-	mi__initLayout(panel, MI_COL, x, y, width, height);
+	mi__initLayout(panel, MI_COL, x, y, width, height, LAYOUT_SPACING);
 
 	return panel->handle;
 }
@@ -944,7 +1157,7 @@ MIhandle miButton(const char* label)
 	content.width += BUTTON_PADDING*2;
 	content.height = BUTTON_HEIGHT;
 
-	box->rect = mi__layoutRect(panel, content, LAYOUT_SPACING);
+	box->rect = mi__layoutRect(panel, NULL, content);
 
 	mi__buttonLogic(mi__hitTest(panel, box->rect), box->handle);
 
@@ -975,7 +1188,7 @@ MIhandle miText(const char* text)
 
 	content = miMeasureText(text, MI_FONT_NORMAL, TEXT_FONT_SIZE);
 
-	box->rect = mi__layoutRect(panel, content, LAYOUT_SPACING);
+	box->rect = mi__layoutRect(panel, NULL, content);
 	mi__drawRect(panel, box->rect.x, box->rect.y, box->rect.width, box->rect.height, miRGBA(255,0,0,32));
 	mi__drawText(panel, box->rect.x, box->rect.y, box->rect.width, box->rect.height, text, miRGBA(255,255,255,255), NVG_ALIGN_LEFT|NVG_ALIGN_MIDDLE, MI_FONT_NORMAL, TEXT_FONT_SIZE);
 
@@ -1028,7 +1241,7 @@ MIhandle miSlider(float* value, float vmin, float vmax)
 	content.width = SLIDER_WIDTH;
 	content.height = SLIDER_HEIGHT;
 
-	box->rect = mi__layoutRect(panel, content, LAYOUT_SPACING);
+	box->rect = mi__layoutRect(panel, NULL, content);
 
 	hrect = handleRect(box->rect, SLIDER_HANDLE, *value, vmin, vmax);
 
@@ -1072,10 +1285,10 @@ MIhandle miSliderValue(float* value, float vmin, float vmax)
 	char num[32];
 	float widths[2] = {200, 50};
 	snprintf(num,32,"%.2f", *value);
-	miDivsBegin(MI_ROW, widths, 2, LAYOUT_SPACING);
+	miDivsBegin(MI_ROW, widths, 2, SLIDER_HEIGHT, LAYOUT_SPACING);
 		miSlider(value, vmin, vmax);
 		miText(num);
-	miDivsEnd();
+	return miDivsEnd();
 }
 
 void miPopupShow(MIhandle handle)
@@ -1097,16 +1310,6 @@ void miPopupToggle(MIhandle handle)
 	MIpopupState* popup = (MIpopupState*)mi__getState(handle, 0, sizeof(MIpopupState));
 	if (popup == NULL) return;
 	popup->visible = !popup->visible;
-}
-
-static MIbox* mi__getBoxByHandle(MIhandle handle)
-{
-	int i;
-	for (i = 0; i < g_context.boxPoolSize; i++) {
-		if (g_context.boxPool[i].handle == handle)
-			return &g_context.boxPool[i];
-	}
-	return NULL;
 }
 
 MIhandle miPopupBegin(MIhandle base, int logic, int side)
@@ -1168,7 +1371,7 @@ MIhandle miPopupBegin(MIhandle base, int logic, int side)
 	mi__pushPanel(panel);
 
 	mi__drawRect(panel, popup->rect.x, popup->rect.y, popup->rect.width, popup->rect.height, miRGBA(0,0,0,128));
-	mi__initLayout(panel, MI_COL, popup->rect.x, popup->rect.y, popup->rect.width, 0);
+	mi__initLayout(panel, MI_COL, popup->rect.x, popup->rect.y, popup->rect.width, 0, LAYOUT_SPACING);
 
 	return panel->handle;
 }
@@ -1221,6 +1424,23 @@ MIhandle miPopupEnd()
 	}
 
 	return panel->handle;
+}
+
+MIhandle miButtonRowBegin(int count)
+{
+	return miDivsBegin(MI_ROW, NULL, count, BUTTON_HEIGHT, 0);
+}
+
+MIhandle miButtonRowEnd()
+{
+	MIpanel* panel = mi__curPanel();
+	MIbox* box = NULL;
+	MIhandle row = miDivsEnd();
+	box = mi__getBoxByHandle(row);
+
+	mi__drawRect(panel, box->rect.x, box->rect.y, box->rect.width, box->rect.height, miRGBA(0,192,255,64));
+
+	return row;
 }
 
 MIhandle miCanvasBegin(MIcanvasState* state, float w, float h)
