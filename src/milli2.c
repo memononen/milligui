@@ -61,6 +61,28 @@ static int mi__pointInRect(float x, float y, MIrect r)
    return x >= r.x &&x <= r.x+r.width && y >= r.y && y <= r.y+r.height;
 }
 
+static char* mi__codepointToUTF8(int cp, char* str)
+{
+	int n = 0;
+	if (cp < 0x80) n = 1;
+	else if (cp < 0x800) n = 2;
+	else if (cp < 0x10000) n = 3;
+	else if (cp < 0x200000) n = 4;
+	else if (cp < 0x4000000) n = 5;
+	else if (cp <= 0x7fffffff) n = 6;
+	str[n] = '\0';
+	switch (n) {
+	case 6: str[5] = 0x80 | (cp & 0x3f); cp = cp >> 6; cp |= 0x4000000;
+	case 5: str[4] = 0x80 | (cp & 0x3f); cp = cp >> 6; cp |= 0x200000;
+	case 4: str[3] = 0x80 | (cp & 0x3f); cp = cp >> 6; cp |= 0x10000;
+	case 3: str[2] = 0x80 | (cp & 0x3f); cp = cp >> 6; cp |= 0x800;
+	case 2: str[1] = 0x80 | (cp & 0x3f); cp = cp >> 6; cp |= 0xc0;
+	case 1: str[0] = cp;
+	}
+	return str;
+}
+
+
 enum MIdrawCommandType {
 	MI_SHAPE_RECT,
 	MI_SHAPE_TEXT,
@@ -141,15 +163,28 @@ typedef struct MIiconImage MIiconImage;
 struct MIcontext {
 	struct NVGcontext* vg;
 	int width, height;
+	float dt;
 	
 	MIinputState input;
 
+	int moved;
+	int clickCount;
+	float timeSincePress;
+
 	MIhandle hoverPanel;
+
 	MIhandle hover;
 	MIhandle active;
+	MIhandle focus;
+
+	MIhandle focused;
+	MIhandle blurred;
+
 	MIhandle pressed;
 	MIhandle released;
 	MIhandle clicked;
+	MIhandle dragged;
+	MIhandle changed;
 
 	float startmx, startmy;
 
@@ -337,6 +372,36 @@ static void mi__drawText(MIpanel* panel, float x, float y, float width, float he
 	shape->fontFace = fontFace;
 	shape->fontSize = fontSize;
 	mi__addShape(panel, shape);
+}
+
+static int mi__measureTextGlyphs(struct NVGglyphPosition* pos, int maxpos,
+								 float x, float y, float width, float height,
+								 const char* text, int textAlign, int fontFace, int fontSize)
+{
+	struct NVGcontext* vg = g_context.vg;
+	int i, count = 0;
+	nvgSave(vg);
+	nvgFontFaceId(vg, fontFace);
+	nvgFontSize(vg, fontSize);
+	nvgTextAlign(vg, textAlign);
+	if (textAlign & NVG_ALIGN_CENTER)
+		x = x + width/2;
+	else if (textAlign & NVG_ALIGN_RIGHT)
+		x = x + width;
+	if (textAlign & NVG_ALIGN_MIDDLE)
+		y = y + height/2;
+	else if (textAlign & NVG_ALIGN_BOTTOM)
+		y = y + height;
+	else if (textAlign & NVG_ALIGN_BASELINE)
+		y = y + height/2 - fontSize/2;
+	count = nvgTextGlyphPositions(vg, x, y, text, NULL, pos, maxpos);
+	nvgRestore(vg);
+
+	// Turn str to indices.
+	for (i = 0; i < count; i++)
+		pos[i].str -= text;
+
+	return count;
 }
 
 MIsize miMeasureText(const char* text, int fontFace, float fontSize)
@@ -565,13 +630,15 @@ static void mi__drawPanel(MIpanel* panel)
 	}
 }
 
-void miFrameBegin(int width, int height, MIinputState* input)
+void miFrameBegin(int width, int height, MIinputState* input, float dt)
 {
 	int i;
 
+	g_context.moved = mi__absf(g_context.input.mx - input->mx) > 0.01f || mi__absf(g_context.input.my - input->my) > 0.01f;
 	g_context.width = width;
 	g_context.height = height;
 	g_context.input = *input;
+	g_context.dt = dt;
 	memset(input, 0, sizeof(*input));
 
 	// Before reseting the pools, check in which panel the mouse is.
@@ -585,16 +652,30 @@ void miFrameBegin(int width, int height, MIinputState* input)
 		}
 	}
 
+	if (g_context.input.mbut & MI_MOUSE_PRESSED) {
+		if (g_context.timeSincePress < 0.5f)
+			g_context.clickCount++;
+		else
+			g_context.clickCount = 1;
+		g_context.timeSincePress = 0;
+	} else {
+		g_context.timeSincePress += mi__minf(g_context.dt, 0.1f);
+	}
+
 	g_context.panelPoolSize = 0;
 	g_context.panelStackHead = 0;
 	g_context.shapePoolSize = 0;
 	g_context.boxPoolSize = 0;
 	g_context.textPoolSize = 0;
 
+	g_context.dragged = g_context.moved ? g_context.active : 0;
+
 	g_context.hover = 0;
 	g_context.pressed = 0;
 	g_context.released = 0;
 	g_context.clicked = 0;
+	g_context.focused = 0;
+	g_context.changed = 0;
 }
 
 void miFrameEnd()
@@ -602,6 +683,15 @@ void miFrameEnd()
 	int i;
 	for (i = 0; i < g_context.panelPoolSize; i++)
 		mi__drawPanel(&g_context.panelPool[i]);
+
+	g_context.blurred = 0;
+	if (g_context.input.mbut & MI_MOUSE_PRESSED) {
+		if (g_context.hover == 0) {
+			g_context.blurred = g_context.focus;
+			g_context.focus = 0;
+		}
+	}
+
 	 mi__garbageCollectState();
 }
 
@@ -1059,7 +1149,8 @@ MIhandle miPanelBegin(float x, float y, float width, float height)
 
 	mi__pushPanel(panel);
 
-	mi__drawRect(panel, x, y, width, height, g_context.hoverPanel == panel->handle ? miRGBA(0,0,0,192) : miRGBA(0,0,0,128));
+//	mi__drawRect(panel, x, y, width, height, g_context.hoverPanel == panel->handle ? miRGBA(0,0,0,192) : miRGBA(0,0,0,128));
+	mi__drawRect(panel, x, y, width, height, miRGBA(0,0,0,128));
 	mi__initLayout(panel, MI_COL, x, y, width, height, LAYOUT_SPACING);
 
 	return panel->handle;
@@ -1073,14 +1164,29 @@ MIhandle miPanelEnd()
 	return panel->handle;
 }
 
-int miHover(MIhandle handle)
+int miIsHover(MIhandle handle)
 {
 	return g_context.hover == handle;
 }
 
-int miActive(MIhandle handle)
+int miIsActive(MIhandle handle)
 {
 	return g_context.active == handle;
+}
+
+int miIsFocus(MIhandle handle)
+{
+	return g_context.focus == handle;
+}
+
+int miFocused(MIhandle handle)
+{
+	return g_context.focused == handle;
+}
+
+int miBlurred(MIhandle handle)
+{
+	return g_context.blurred == handle;
 }
 
 int miPressed(MIhandle handle)
@@ -1098,12 +1204,53 @@ int miClicked(MIhandle handle)
 	return g_context.clicked == handle;
 }
 
+int miDragged(MIhandle handle)
+{
+	return g_context.dragged == handle;
+}
+
+int miChanged(MIhandle handle)
+{
+	return g_context.changed == handle;
+}
+
+void miBlur(MIhandle handle)
+{
+	if (g_context.focus) {
+		g_context.blurred = g_context.focus;
+		g_context.focus = 0;
+	}
+}
+
+void miChange(MIhandle handle)
+{
+	g_context.changed = handle;
+}
+
 MIpoint miMousePos()
 {
 	MIpoint pos;
 	pos.x = g_context.input.mx;
 	pos.y = g_context.input.my;
 	return pos;
+}
+
+int miMouseClickCount()
+{
+	return g_context.clickCount;
+}
+
+int miGetKeyPress(MIkeyPress* key)
+{
+	int i;
+	if (g_context.input.nkeys) {
+		*key = g_context.input.keys[0];
+		for (i = 0; i < g_context.input.nkeys-1; i++)
+			g_context.input.keys[i] = g_context.input.keys[i+1];
+		g_context.input.nkeys--;
+		return 1;
+	}
+	return 0;
 }
 
 #define BUTTON_HEIGHT 32
@@ -1127,6 +1274,13 @@ static void mi__buttonLogic(int over, MIhandle handle)
 		if (g_context.active == 0 && g_context.hover == handle) {
 			g_context.active = handle;
 			g_context.pressed = handle;
+			if (g_context.focus != handle) {
+				if (g_context.focus != 0)
+					g_context.blurred = g_context.focus;
+				g_context.focus = handle;
+				g_context.focused = handle;
+			}
+			g_context.input.mbut &= ~MI_MOUSE_PRESSED;
 		}
 	}
 
@@ -1134,6 +1288,7 @@ static void mi__buttonLogic(int over, MIhandle handle)
 		if (g_context.active == handle) {
 			g_context.active = 0;
 			g_context.released = handle;
+			g_context.input.mbut &= ~MI_MOUSE_RELEASED;
 		}
 	}
 
@@ -1161,9 +1316,9 @@ MIhandle miButton(const char* label)
 
 	mi__buttonLogic(mi__hitTest(panel, box->rect), box->handle);
 
-	if (miActive(box->handle))
+	if (miIsActive(box->handle))
 		mi__drawRect(panel, box->rect.x, box->rect.y, box->rect.width, box->rect.height, miRGBA(255,0,0,192));
-	else if (miHover(box->handle))
+	else if (miIsHover(box->handle))
 		mi__drawRect(panel, box->rect.x, box->rect.y, box->rect.width, box->rect.height, miRGBA(255,0,0,128));
 	else
 		mi__drawRect(panel, box->rect.x, box->rect.y, box->rect.width, box->rect.height, miRGBA(255,0,0,64));
@@ -1191,6 +1346,329 @@ MIhandle miText(const char* text)
 	box->rect = mi__layoutRect(panel, NULL, content);
 	mi__drawRect(panel, box->rect.x, box->rect.y, box->rect.width, box->rect.height, miRGBA(255,0,0,32));
 	mi__drawText(panel, box->rect.x, box->rect.y, box->rect.width, box->rect.height, text, miRGBA(255,255,255,255), NVG_ALIGN_LEFT|NVG_ALIGN_MIDDLE, MI_FONT_NORMAL, TEXT_FONT_SIZE);
+
+	return box->handle;
+}
+
+#define INPUT_WIDTH 100
+#define INPUT_HEIGHT 28
+
+struct MItextInputState {
+	int maxText;
+	int caretPos;
+	int nglyphs;
+	int selPivot;
+	int selStart, selEnd;
+};
+typedef struct MItextInputState MItextInputState;
+
+static int findCaretPos(float x, struct NVGglyphPosition* glyphs, int nglyphs)
+{
+	float px;
+	int i, caret;
+	if (nglyphs == 0 || glyphs == NULL) return 0;
+	if (x <= glyphs[0].x)
+		return 0;
+	px = glyphs[0].x;
+	caret = nglyphs;
+	for (i = 0; i < nglyphs; i++) {
+		float x0 = glyphs[i].x;
+		float x1 = (i+1 < nglyphs) ? glyphs[i+1].x : glyphs[nglyphs-1].maxx;
+		float gx = x0 * 0.3f + x1 * 0.7f;
+		if (x >= px && x < gx)
+			caret = i;
+		px = gx;
+	}
+
+	return caret;
+}
+
+static void insertText(char* dst, int ndst, int idx, char* str, int nstr)
+{
+	int i, count;
+	if (idx < 0 || idx >= ndst) return;
+	// Make space for the new string
+	for (i = ndst-1; i >= idx+nstr; i--)
+		dst[i] = dst[i-nstr];
+	// Insert
+	count = mi__mini(idx+nstr, ndst-1) - idx;
+	for (i = 0; i < count; i++)
+		dst[idx+i] = str[i];
+	dst[ndst-1] = '\0';
+}
+
+static void deleteText(char* dst, int ndst, int idx, int ndel)
+{
+	int i;
+	if (idx < 0 || idx >= ndst) return;
+	for (i = idx; i < ndst-ndel; i++)
+		dst[i] = dst[i+ndel];
+}
+
+static int isSpace(int c)
+{
+	switch (c) {
+		case 9:			// \t
+		case 11:		// \v
+		case 12:		// \f
+		case 32:		// space
+			return 1;
+	};
+	return 0;
+}
+
+MIhandle miInput(char* text, int maxText)
+{
+	MIsize content;
+	MIbox* box = NULL;
+	MIrect hrect;
+	MIpanel* panel = mi__curPanel();
+	if (panel == NULL) return 0;
+	box = mi__allocBox();
+	if (box == NULL) return 0;
+
+	box->handle = mi__allocHandle(panel);
+
+	content.width = INPUT_WIDTH;
+	content.height = INPUT_HEIGHT;
+
+	box->rect = mi__layoutRect(panel, NULL, content);
+
+	mi__buttonLogic(mi__hitTest(panel, box->rect), box->handle);
+
+	if (miFocused(box->handle)) {
+		printf("focused\n");
+		MItextInputState* state = NULL;
+		char* stateText = NULL;
+		struct NVGglyphPosition* stateGlyphs = NULL;
+		state = (MItextInputState*)mi__getState(box->handle, 0, sizeof(MItextInputState));
+		stateText = (char*)mi__getState(box->handle, 0, maxText);
+		stateGlyphs = (struct NVGglyphPosition*)mi__getState(box->handle, 0, sizeof(struct NVGglyphPosition)*maxText);
+		if (state == NULL  || stateText == NULL || stateGlyphs == NULL) return 0;
+		memcpy(stateText, text, maxText);
+		state->maxText = maxText;
+		state->nglyphs = mi__measureTextGlyphs(stateGlyphs, maxText,
+							box->rect.x, box->rect.y, box->rect.width, box->rect.height,
+							stateText, NVG_ALIGN_LEFT|NVG_ALIGN_MIDDLE, MI_FONT_NORMAL, TEXT_FONT_SIZE);
+		state->caretPos = state->nglyphs;
+		state->selStart = 0;
+		state->selEnd = state->nglyphs;
+		state->selPivot = -1;
+	}
+
+	if (miIsFocus(box->handle)) {
+		int i;
+		float caretx = 0;
+		MItextInputState* state = NULL;
+		char* stateText = NULL;
+		struct NVGglyphPosition* stateGlyphs = NULL;
+		state = (MItextInputState*)mi__getState(box->handle, 0, sizeof(MItextInputState));
+		stateText = (char*)mi__getState(box->handle, 0, maxText);
+		stateGlyphs = (struct NVGglyphPosition*)mi__getState(box->handle, 0, sizeof(struct NVGglyphPosition)*maxText);
+		if (state == NULL  || stateText == NULL || stateGlyphs == NULL) return 0;
+
+		if (miPressed(box->handle)) {
+			MIpoint mouse = miMousePos();
+			// Press
+			if (miMouseClickCount() > 1) {
+				state->selStart = 0;
+				state->selEnd = state->selPivot = state->caretPos = state->nglyphs;
+			} else {
+				state->caretPos = findCaretPos(mouse.x, stateGlyphs, state->nglyphs);
+				state->selStart = state->selEnd = state->selPivot = state->caretPos;
+			}
+		}
+		if (miDragged(box->handle)) {
+			MIpoint mouse = miMousePos();
+			// Drag
+			state->caretPos = findCaretPos(mouse.x, stateGlyphs, state->nglyphs);
+			state->selStart = mi__mini(state->caretPos, state->selPivot);
+			state->selEnd = mi__maxi(state->caretPos, state->selPivot);
+		}
+
+		MIkeyPress key;
+		while (miGetKeyPress(&key)) {
+			if (key.type == MI_KEYPRESSED) {
+				if (key.code == 263) {
+					// Left
+					if (key.mods & 1) { // Shift
+						if (state->selPivot == -1)
+							state->selPivot = state->caretPos;
+					}
+					if (key.mods & 4) { // Alt
+						// Prev word
+						while (state->caretPos > 0 && isSpace(stateText[(int)stateGlyphs[state->caretPos-1].str]))
+							state->caretPos--;
+						while (state->caretPos > 0 && !isSpace(stateText[(int)stateGlyphs[state->caretPos-1].str]))
+							state->caretPos--;
+					} else {
+						if (state->caretPos > 0)
+							state->caretPos--;
+					}
+					if (key.mods & 1) { // Shift
+						state->selStart = mi__mini(state->caretPos, state->selPivot);
+						state->selEnd = mi__maxi(state->caretPos, state->selPivot);
+					} else {
+						if (state->selStart != state->selEnd)
+							state->caretPos = state->selStart;
+						state->selStart = state->selEnd = 0;
+						state->selPivot = -1;
+					}
+				} else if (key.code == 262) {
+					// Right
+					if (key.mods & 1) { // Shift
+						if (state->selPivot == -1)
+							state->selPivot = state->caretPos;
+					}
+					if (key.mods & 4) { // Alt
+						// Next word
+						while (state->caretPos < state->nglyphs && isSpace(stateText[(int)stateGlyphs[state->caretPos].str]))
+							state->caretPos++;
+						while (state->caretPos < state->nglyphs && !isSpace(stateText[(int)stateGlyphs[state->caretPos].str]))
+							state->caretPos++;
+					} else {
+						if (state->caretPos < state->nglyphs)
+							state->caretPos++;
+					}
+					if (key.mods & 1) { // Shift
+						state->selStart = mi__mini(state->caretPos, state->selPivot);
+						state->selEnd = mi__maxi(state->caretPos, state->selPivot);
+					} else {
+						if (state->selStart != state->selEnd)
+							state->caretPos = state->selEnd;
+						state->selStart = state->selEnd = 0;
+						state->selPivot = -1;
+					}
+				} else if (key.code == 259) {
+					// Delete
+					int del = 0, count = 0;
+					if (state->selStart != state->selEnd) {
+						del = state->selStart;
+						count = state->selEnd - state->selStart;
+						state->caretPos = state->selStart;
+					} else if (state->caretPos > 0) {
+						if (state->caretPos < state->nglyphs) {
+							del = (int)stateGlyphs[state->caretPos-1].str;
+							count = (int)stateGlyphs[state->caretPos].str - (int)stateGlyphs[state->caretPos-1].str;
+							state->caretPos--;
+						} else {
+							del = (int)stateGlyphs[state->nglyphs-1].str;
+							count = (int)strlen(stateText) - (int)stateGlyphs[state->nglyphs-1].str;
+							state->caretPos = state->nglyphs-1;
+						}
+					}
+					if (count > 0) {
+						deleteText(stateText, state->maxText, del, count);
+						state->nglyphs = mi__measureTextGlyphs(stateGlyphs, maxText,
+											box->rect.x, box->rect.y, box->rect.width, box->rect.height,
+											stateText, NVG_ALIGN_LEFT|NVG_ALIGN_MIDDLE, MI_FONT_NORMAL, TEXT_FONT_SIZE);
+						// Store result
+//						mgSetResultStr(w->id, stateText, state->maxText);
+						strncpy(text, stateText, maxText);
+						miChange(box->handle);
+
+						state->selStart = state->selEnd = 0;
+						state->selPivot = -1;
+					}
+				} else if (key.code == 258) {
+					// Tab
+//					mgSetResultStr(w->id, stateText, state->maxText);
+					strncpy(text, stateText, maxText);
+					miChange(box->handle);
+/*					if (key.mods & 1)
+						mgFocusPrev(w->id);
+					else
+						mgFocusNext(w->id);*/
+				} else if (key.code == 257) {
+					// Enter
+//					mgSetResultStr(w->id, stateText, state->maxText);
+					strncpy(text, stateText, maxText);
+					miChange(box->handle);
+					miBlur(box->handle);
+				}
+			} else if (key.type == MI_CHARTYPED) {
+				int ins;
+				char str[8];
+
+				// Delete selection
+				if (state->selStart != state->selEnd) {
+					int del = 0, count = 0;
+					del = state->selStart;
+					count = state->selEnd - state->selStart;
+					state->caretPos = state->selStart;
+					if (count > 0) {
+						deleteText(stateText, state->maxText, del, count);
+						state->nglyphs = mi__measureTextGlyphs(stateGlyphs, maxText,
+											box->rect.x, box->rect.y, box->rect.width, box->rect.height,
+											stateText, NVG_ALIGN_LEFT|NVG_ALIGN_MIDDLE, MI_FONT_NORMAL, TEXT_FONT_SIZE);
+						state->selStart = state->selEnd = 0;
+						state->selPivot = -1;
+					}
+				}
+
+				// Append
+				mi__codepointToUTF8(key.code, str);
+				if (state->caretPos >= 0 && state->caretPos < state->nglyphs)
+					ins = (int)stateGlyphs[state->caretPos].str;
+				else
+					ins = strlen(stateText);
+				insertText(stateText, state->maxText, ins, str, strlen(str));
+
+				state->nglyphs = mi__measureTextGlyphs(stateGlyphs, maxText,
+									box->rect.x, box->rect.y, box->rect.width, box->rect.height,
+									stateText, NVG_ALIGN_LEFT|NVG_ALIGN_MIDDLE, MI_FONT_NORMAL, TEXT_FONT_SIZE);
+				state->caretPos = mi__mini(state->caretPos + strlen(str), state->nglyphs);
+
+				state->selStart = state->selEnd = 0;
+				state->selPivot = -1;
+
+				// Store result
+				strncpy(text, stateText, maxText);
+			}
+		}
+
+/*		for (i = 0; i < state->nglyphs; i++) {
+			struct NVGglyphPosition* p = &stateGlyphs[i];
+			mi__drawRect(panel, p->minx, box->rect.y, p->maxx - p->minx, box->rect.height, miRGBA(255,0,0,64));
+		}*/
+
+		mi__drawRect(panel, box->rect.x, box->rect.y, box->rect.width, box->rect.height, miRGBA(0,0,0,128));
+
+		if (state->selStart != state->selEnd && state->nglyphs > 0) {
+			float sx = (state->selStart >= state->nglyphs) ? stateGlyphs[state->nglyphs-1].maxx : stateGlyphs[state->selStart].x;
+			float ex = (state->selEnd >= state->nglyphs) ? stateGlyphs[state->nglyphs-1].maxx : stateGlyphs[state->selEnd].x;
+			mi__drawRect(panel, sx, box->rect.y, ex - sx, box->rect.height, miRGBA(255,0,0,64));
+		}
+
+		mi__drawText(panel, box->rect.x, box->rect.y, box->rect.width, box->rect.height, stateText, miRGBA(255,255,255,255),
+			NVG_ALIGN_LEFT|NVG_ALIGN_MIDDLE, MI_FONT_NORMAL, TEXT_FONT_SIZE);
+
+/*		nvgFillColor(vg, nvgRGBA(255,0,0,64));
+		for (j = 0; j < state->nglyphs; j++) {
+			struct NVGglyphPosition* p = &stateGlyphs[j];
+			nvgBeginPath(vg);
+			nvgRect(vg, p->minx, w->y, p->maxx - p->minx, w->height);
+			nvgFill(vg);
+		}*/
+
+		if (state->nglyphs == 0) {
+/*			if (w->style.textAlign == MG_CENTER)
+				caretx = w->x + w->width/2;
+			else if (w->style.textAlign == MG_END)
+				caretx = w->x + w->width - w->style.paddingx;
+			else*/
+				caretx = box->rect.x;
+		} else if (state->caretPos >= state->nglyphs) {
+			caretx = stateGlyphs[state->nglyphs-1].maxx;
+		} else {
+			caretx = stateGlyphs[state->caretPos].x;
+		}
+		mi__drawRect(panel, (int)(caretx-0.5f), box->rect.y, 1, box->rect.height, miRGBA(255,0,0,255));
+	} else {
+		mi__drawRect(panel, box->rect.x, box->rect.y, box->rect.width, box->rect.height, miRGBA(0,0,0,32));
+		mi__drawText(panel, box->rect.x, box->rect.y, box->rect.width, box->rect.height, text, miRGBA(255,255,255,255),
+			NVG_ALIGN_LEFT|NVG_ALIGN_MIDDLE, MI_FONT_NORMAL, TEXT_FONT_SIZE);
+	}
 
 	return box->handle;
 }
@@ -1258,7 +1736,7 @@ MIhandle miSlider(float* value, float vmin, float vmax)
 			slider->origValue = *value;
 		}
 	}
-	if (miActive(box->handle)) {
+	if (miDragged(box->handle)) {
 		MIsliderState* slider = (MIsliderState*)mi__getState(box->handle, 0, sizeof(MIsliderState));
 		if (slider != NULL) {
 			MIpoint mouse = miMousePos();
@@ -1312,6 +1790,8 @@ void miPopupToggle(MIhandle handle)
 	popup->visible = !popup->visible;
 }
 
+#define POPUP_SAFE_ZONE 10
+
 MIhandle miPopupBegin(MIhandle base, int logic, int side)
 {
 	MIbox* box;
@@ -1333,12 +1813,13 @@ MIhandle miPopupBegin(MIhandle base, int logic, int side)
 		// on spawn on click
 		if (miClicked(base)) {
 			popup->visible = !popup->visible;
+			popup->visited = 0;
 			if (popup->visible)
 				wentVisible = 1;
 		}
 	} else {
 		// on spawn on hover
-		if (miHover(base)) {
+		if (miIsHover(base)) {
 			if (!popup->visible) {
 				popup->visible = 1;
 				popup->visited = 0;
@@ -1347,6 +1828,32 @@ MIhandle miPopupBegin(MIhandle base, int logic, int side)
 		} else {
 			if (!popup->visited) {
 				popup->visible = 0;
+			}
+		}
+	}
+
+	// Close condition
+	if (popup->visible) {
+		if (popup->logic == MI_ONCLICK) {
+			// on click
+			if (g_context.input.mbut & MI_MOUSE_PRESSED) {
+				if (g_context.active == 0 && g_context.hoverPanel <= panel->handle && popup->visited)
+					popup->visible = 0;
+			}
+			popup->visited = 1;
+		} else {
+			// on hover
+			if (g_context.input.mbut & MI_MOUSE_PRESSED) {
+				if (g_context.active == 0 && g_context.hoverPanel <= panel->handle)
+					popup->visible = 0;
+			}
+
+			if (mi__pointInRect(g_context.input.mx, g_context.input.my, mi__inflateRect(popup->rect, POPUP_SAFE_ZONE))) {
+				popup->visited = 1;
+			} else {
+				// This prevents closing cascaded popups.
+				if (popup->visited && g_context.hoverPanel < panel->handle && !miIsHover(base))
+					popup->visible = 0;
 			}
 		}
 	}
@@ -1376,9 +1883,6 @@ MIhandle miPopupBegin(MIhandle base, int logic, int side)
 	return panel->handle;
 }
 		
-
-#define POPUP_SAFE_ZONE 10
-
 MIhandle miPopupEnd()
 {
 	MIpanel* panel;
@@ -1399,13 +1903,14 @@ MIhandle miPopupEnd()
 	popup->rect.height = layout->space.height + PANEL_PADDING*2;
 
 	// Close condition
-	if (popup->visible) {
+/*	if (popup->visible) {
 		if (popup->logic == MI_ONCLICK) {
 			// on click
 			if (g_context.input.mbut & MI_MOUSE_PRESSED) {
-				if (g_context.active == 0 && g_context.hoverPanel <= panel->handle)
+				if (g_context.active == 0 && g_context.hoverPanel <= panel->handle && popup->visited)
 					popup->visible = 0;
 			}
+			popup->visited = 1;
 		} else {
 			// on hover
 			if (g_context.input.mbut & MI_MOUSE_PRESSED) {
@@ -1421,7 +1926,7 @@ MIhandle miPopupEnd()
 					popup->visible = 0;
 			}
 		}
-	}
+	}*/
 
 	return panel->handle;
 }

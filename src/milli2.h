@@ -50,6 +50,7 @@ struct MIcolor {
 typedef struct MIcolor MIcolor;
 
 enum MIwidgetEvent {
+	MI_NONE,
 	MI_FOCUSED,
 	MI_BLURRED,
 	MI_CLICKED,
@@ -65,7 +66,7 @@ enum MIwidgetEvent {
 
 #define MI_MAX_INPUTKEYS 32
 struct MIkeyPress {
-	int type, code;
+	int type, code, mods;
 };
 typedef struct MIkeyPress MIkeyPress;
 
@@ -118,22 +119,35 @@ int miCreateFont(int face, const char* filename);
 int miCreateIconImage(const char* name, const char* filename, float scale);
 
 
-void miFrameBegin(int width, int height, MIinputState* input);
+void miFrameBegin(int width, int height, MIinputState* input, float dt);
 void miFrameEnd();
 
 MIhandle miPanelBegin(float x, float y, float width, float height);
 MIhandle miPanelEnd();
 
-int miHover(MIhandle handle);
-int miActive(MIhandle handle);
+int miIsHover(MIhandle handle);
+int miIsActive(MIhandle handle);
+int miIsFocus(MIhandle handle);
+
+int miFocused(MIhandle handle);
+int miBlurred(MIhandle handle);
+
 int miPressed(MIhandle handle);
 int miReleased(MIhandle handle);
 int miClicked(MIhandle handle);
+int miDragged(MIhandle handle);
+int miChanged(MIhandle handle);
+
+void miBlur(MIhandle handle);
+void miChange(MIhandle handle);
+
 MIpoint miMousePos();
+int miMouseClickCount();
 
 MIhandle miButton(const char* label);
 MIhandle miText(const char* text);
 MIhandle miSlider(float* value, float vmin, float vmax);
+MIhandle miInput(char* text, int maxText);
 
 MIhandle miSliderValue(float* value, float vmin, float vmax);
 

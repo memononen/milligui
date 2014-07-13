@@ -115,6 +115,7 @@ static void keycb(GLFWwindow* window, int key, int scancode, int action, int mod
 			if (input.nkeys < MI_MAX_INPUTKEYS) {
 				input.keys[input.nkeys].type = MI_KEYPRESSED;
 				input.keys[input.nkeys].code = key;
+				input.keys[input.nkeys].mods = mods;
 				input.nkeys++;
 			}
 		}
@@ -124,6 +125,7 @@ static void keycb(GLFWwindow* window, int key, int scancode, int action, int mod
 			if (input.nkeys < MI_MAX_INPUTKEYS) {
 				input.keys[input.nkeys].type = MI_KEYRELEASED;
 				input.keys[input.nkeys].code = key;
+				input.keys[input.nkeys].mods = mods;
 				input.nkeys++;
 			}
 		}
@@ -138,6 +140,7 @@ static void charcb(GLFWwindow* window, unsigned int codepoint)
 		if (input.nkeys < MI_MAX_INPUTKEYS) {
 			input.keys[input.nkeys].type = MI_CHARTYPED;
 			input.keys[input.nkeys].code = codepoint;
+			input.keys[input.nkeys].mods = 0;
 			input.nkeys++;
 		}
 	}
@@ -181,7 +184,8 @@ int main()
 	GLFWwindow* window;
 	struct NVGcontext* vg = NULL;
 
-	char search[64];
+	char search[64] = "Foob-foob";
+	double t = 0;
 
 /*	int blending = 0;
 	float opacity = 0.5f;
@@ -278,6 +282,9 @@ int main()
 		int winWidth, winHeight;
 		int fbWidth, fbHeight;
 		float pxRatio;
+		double dt;
+		dt = glfwGetTime() - t;
+		t += dt;
 
 //		float t = glfwGetTime();
 //		float x,y,popy;
@@ -301,7 +308,7 @@ int main()
 
 		input.mx = mx;
 		input.my = my;
-		miFrameBegin(winWidth, winHeight, &input);
+		miFrameBegin(winWidth, winHeight, &input, (float)dt);
 
 //		input.nkeys = 0;
 //		input.mbut = 0;
@@ -323,7 +330,7 @@ int main()
 		
 //		miRender(panel, vg);
 
-		miPanelBegin(50,50, 250,400);
+		miPanelBegin(50,50, 250,450);
 
 		MIhandle button = miButton("Popup");
 		MIhandle popup = miPopupBegin(button, MI_ONCLICK, MI_BELOW);
@@ -390,6 +397,7 @@ int main()
 			miButton("D");
 		miButtonRowEnd();
 
+		miInput(search, sizeof(search));
 
 		miPanelBegin(250,250, 250,40);
 			miText("Another one...");
