@@ -332,7 +332,87 @@ int main()
 
 		miPanelBegin(50,50, 250,450);
 
-		MIhandle button = miButton("Popup");
+		miDockBegin(MI_TOP_BOTTOM);
+			miText("Materials");
+			float cols[3] = {25, -1, 25};
+			miDivsBegin(MI_LEFT_RIGHT, 3, cols);
+				miRowHeight(25);
+				miText("S");
+				miInput(search, sizeof(search));
+				miText("X");
+				miText("Q");
+			miDivsEnd();
+			miSliderValue(&value, -1.0f, 1.0f);
+/*			miLayoutBegin();
+				miRowHeight(25);
+				miPack(MI_LEFT_RIGHT);
+				miText("S");
+				miPack(MI_RIGHT_LEFT);
+				miText("X");
+				miPack(MI_FILLX);
+				miInput(search, sizeof(search));
+			miLayoutEnd();*/
+		miDockEnd();
+
+		miDockBegin(MI_BOTTOM_TOP);
+			float cols2[3] = {-1, 60, 40};
+			miDivsBegin(MI_LEFT_RIGHT, 3, cols2);
+				miRowHeight(20);
+				miSpacer();
+				miButton("Add");
+				miButton("Delete");
+			miDivsEnd();
+		miDockEnd();
+
+//		miLayoutBegin();
+//				miRowHeight(20);
+/*			miPack(MI_LEFT_RIGHT);
+			miText("Ins");
+			miPack(MI_RIGHT_LEFT);
+			miButton("Delete");
+			miButton("Add");*/
+
+//		miLayoutEnd();
+
+		miDockBegin(MI_FILLY);
+
+			miLayoutBegin(MI_LEFT_RIGHT);
+				miRowHeight(50);
+				miText("IMG");
+
+				float rows[4] = {-1, 20, 15, -1};
+				miDivsBegin(MI_TOP_BOTTOM, 4, rows);
+					miSpacer();
+					miText("Plastic");
+					miText("very shiny");
+				miDivsEnd();
+
+			miLayoutEnd();
+
+			miLayoutBegin(MI_LEFT_RIGHT);
+				miRowHeight(50);
+				miText("IMG");
+				miLayoutBegin(MI_TOP_BOTTOM);
+					miText("Plastic");
+					miText("very shiny");
+				miLayoutEnd();
+			miLayoutEnd();
+
+		miDockEnd();
+
+/*			miText("TOP");
+
+		miPack(MI_BOTTOM_TOP);
+			miText("BOTTOM");
+
+		miPack(MI_LEFT_RIGHT);
+			miText("LEFT");
+
+		miPack(MI_RIGHT_LEFT);
+			miText("RIGHT");*/
+
+
+/*		MIhandle button = miButton("Popup");
 		MIhandle popup = miPopupBegin(button, MI_ONCLICK, MI_BELOW);
 			miText("Popup...");
 			miCanvasBegin(&canvas, MI_FIT, 50);
@@ -401,7 +481,7 @@ int main()
 
 		miPanelBegin(250,250, 250,40);
 			miText("Another one...");
-		miPanelEnd();
+		miPanelEnd();*/
 
 		miPanelEnd();
 

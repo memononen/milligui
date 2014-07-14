@@ -151,6 +151,7 @@ MIhandle miInput(char* text, int maxText);
 
 MIhandle miSliderValue(float* value, float vmin, float vmax);
 
+/*
 MIhandle miDivsBegin(int dir, float* divs, int count, float height, float spacing);
 MIhandle miDivsEnd();
 
@@ -159,6 +160,31 @@ MIhandle miStackEnd();
 
 MIhandle miButtonRowBegin(int count);
 MIhandle miButtonRowEnd();
+*/
+
+enum MIpack {
+	MI_TOP_BOTTOM,
+	MI_BOTTOM_TOP,
+	MI_LEFT_RIGHT,
+	MI_RIGHT_LEFT,
+	MI_FILLX,
+	MI_FILLY,
+};
+
+void miPack(int pack);
+void miColWidth(float width);
+void miRowHeight(float height);
+
+MIhandle miDockBegin(int pack);
+MIhandle miDockEnd();
+
+MIhandle miLayoutBegin(int pack);
+MIhandle miLayoutEnd();
+
+MIhandle miDivsBegin(int pack, int count, float* divs);
+MIhandle miDivsEnd();
+
+MIhandle miSpacer();
 
 enum MIpopupSide {
 	MI_RIGHT,
