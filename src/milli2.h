@@ -151,17 +151,6 @@ MIhandle miInput(char* text, int maxText);
 
 MIhandle miSliderValue(float* value, float vmin, float vmax);
 
-/*
-MIhandle miDivsBegin(int dir, float* divs, int count, float height, float spacing);
-MIhandle miDivsEnd();
-
-MIhandle miStackBegin(int dir, float height, float spacing);
-MIhandle miStackEnd();
-
-MIhandle miButtonRowBegin(int count);
-MIhandle miButtonRowEnd();
-*/
-
 enum MIpack {
 	MI_TOP_BOTTOM,
 	MI_BOTTOM_TOP,
