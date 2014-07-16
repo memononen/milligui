@@ -818,6 +818,63 @@ static void mi__initLayout(MIpanel* panel, int dir, float x, float y, float widt
 //	printf("init layout\n");
 }
 
+static MIrect mi__getFreeRect(MIpanel* panel, MIlayout* layout)
+{
+	MIrect rect = {0,0,0,0};
+	if (layout == NULL) layout = mi__getLayout(panel);
+	if (layout == NULL) return rect;
+
+//	if (layout->pack == MI_TOP_BOTTOM || layout->pack == MI_BOTTOM_TOP) {
+		if (layout->colWidth > 0)
+			rect.width = layout->colWidth;
+		else
+			rect.width = layout->xmax - layout->xmin;
+//	}
+//	if (layout->pack == MI_LEFT_RIGHT || layout->pack == MI_RIGHT_LEFT) {
+		if (layout->rowHeight > 0)
+			rect.height = layout->rowHeight;
+		else
+			rect.height = layout->ymax - layout->ymin;
+//	}
+
+	if (layout->cellCount > 0) {
+		if (layout->pack == MI_TOP_BOTTOM) {
+
+			rect.y = layout->ymin + layout->cellMin[layout->cellIndex];
+			rect.height = layout->cellWidths[layout->cellIndex];
+			rect.x = layout->align == MI_RIGHT_LEFT ? layout->xmax - content.width : layout->xmin;
+			//rect.width = content.width; //layout->xmax - layout->xmin;
+
+			layout->cellIndex++;
+			if (layout->cellIndex >= layout->cellCount) {
+				layout->cellIndex = 0;
+				if (layout->align == MI_RIGHT_LEFT)
+					layout->xmax = layout->cxmin;
+				else
+					layout->xmin = layout->cxmax;
+			}
+
+		} else if (layout->pack == MI_LEFT_RIGHT) {
+
+			rect.x = layout->xmin + layout->cellMin[layout->cellIndex];
+			rect.width = layout->cellWidths[layout->cellIndex];
+			rect.y = layout->align == MI_BOTTOM_TOP ? layout->ymax - content.height : layout->ymin;
+			//rect.height = content.height; //layout->ymax - layout->ymin;
+
+			layout->cellIndex++;
+			if (layout->cellIndex >= layout->cellCount) {
+				layout->cellIndex = 0;
+				if (layout->align == MI_BOTTOM_TOP)
+					layout->ymax = layout->cymin;
+				else
+					layout->ymin = layout->cymax;
+			}
+
+		}
+	} else {
+	}
+}
+
 static MIrect mi__layoutRect(MIpanel* panel, MIlayout* layout, MIsize content)
 {
 	MIrect rect = {0,0,0,0};
@@ -1048,10 +1105,25 @@ MIhandle miDivsBegin(int pack, int count, float* divs)
 	box = mi__allocBox();
 	if (box == NULL) return 0;
 
-	layout->rect.x = prevLayout->xmin;
+/*	float oldw, oldh;
+	oldw = prevLayout->colWidth;
+	oldh = prevLayout->rowHeight;
+	prevLayout->colWidth = 0;
+	prevLayout->rowHeight = 0;*/
+
+	MIsize content;
+	content.width = prevLayout->colWidth > 0 ? prevLayout->colWidth : layout->xmax - layout->xmin;
+	content.height = prevLayout->rowHeight > 0 ? prevLayout->rowHeight : layout->ymax - layout->ymin;;
+	MIrect rect = mi__layoutRect(panel, prevLayout, content);
+	layout->rect = rect;
+
+//	prevLayout->colWidth = oldw;
+//	prevLayout->rowHeight = oldh;
+
+/*	layout->rect.x = prevLayout->xmin;
 	layout->rect.y = prevLayout->ymin;
 	layout->rect.width = prevLayout->xmax - prevLayout->xmin;
-	layout->rect.height = prevLayout->ymax - prevLayout->ymin;
+	layout->rect.height = prevLayout->ymax - prevLayout->ymin;*/
 
 	float pad = 0;//PANEL_PADDING;
 	layout->xmin = layout->rect.x + pad;
@@ -1071,9 +1143,9 @@ MIhandle miDivsBegin(int pack, int count, float* divs)
 	float total = 0, avail = 0;
 
 	if (pack == MI_LEFT_RIGHT) {
-		size = prevLayout->colWidth > 0 ? prevLayout->colWidth : layout->xmax - layout->xmin;
+		size = layout->rect.width; //prevLayout->colWidth > 0 ? prevLayout->colWidth : layout->xmax - layout->xmin;
 	} else {
-		size = prevLayout->rowHeight > 0 ? prevLayout->rowHeight : layout->ymax - layout->ymin;
+		size = layout->rect.height; //prevLayout->rowHeight > 0 ? prevLayout->rowHeight : layout->ymax - layout->ymin;
 	}
 
 	if (divs != NULL) {

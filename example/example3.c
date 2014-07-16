@@ -376,27 +376,29 @@ int main()
 
 		miDockBegin(MI_FILLY);
 
-			miLayoutBegin(MI_LEFT_RIGHT);
-				miRowHeight(50);
-				miText("IMG");
-
+//			miLayoutBegin(MI_LEFT_RIGHT);
+			float cols3[2] = {50, -1};
+			miDivsBegin(MI_LEFT_RIGHT, 2, cols3);
+				miText("1");
+				miText("2");
+//				miRowHeight(50);
+/*				miText("IMG");
 				float rows[4] = {-1, 20, 15, -1};
 				miDivsBegin(MI_TOP_BOTTOM, 4, rows);
 					miSpacer();
 					miText("Plastic");
 					miText("very shiny");
-				miDivsEnd();
+				miDivsEnd();*/
+			miDivsEnd();
 
-			miLayoutEnd();
-
-			miLayoutBegin(MI_LEFT_RIGHT);
+/*			miLayoutBegin(MI_LEFT_RIGHT);
 				miRowHeight(50);
 				miText("IMG");
 				miLayoutBegin(MI_TOP_BOTTOM);
 					miText("Plastic");
 					miText("very shiny");
 				miLayoutEnd();
-			miLayoutEnd();
+			miLayoutEnd();*/
 
 		miDockEnd();
 
