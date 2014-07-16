@@ -36,14 +36,14 @@ miDockBegin(MI_TOP_BOTTOM);
 	float cols[3] = {MI_ICON_WIDTH, MI_FLEX, MI_ICON_WIDTH};
 	miDivsBegin(MI_LEFT_RIGHT, 3, cols);
 		miRowHeight(MI_INPUT_HEIGHT);
-		miIcon(“search”);
+		miIcon("search");
 		searchInput = miInput(searchText, sizeof(searchText));
-		searchClear = miIcon(“cross”);
+		searchClear = miIcon("cross");
 	miDivsEnd();
 	if (miChanged(searchInput))
 		setFilter(filter, searchText);
 	if (miClicked(searchClear))
-		strcpy(searchText, “”);
+		strcpy(searchText, "");
 miDockEnd();
 
 // Footer
@@ -53,7 +53,7 @@ miDockBegin(MI_BOTTOM_TOP);
 	miDivsBegin(MI_LEFT_RIGHT, 3, cols2);
 		miRowHeight(MI_BUTTON_HEIGHT);
 		miSpacer();
-		add = miIconButton("Add”, “plus”);
+		add = miIconButton("Add”, "plus");
 		del = miButton("Delete");
 	miDivsEnd();
 	if (miClicked(add)) {
@@ -133,11 +133,11 @@ This divides the panel as follows:
 | footer  ^ | 
 +-----------+ 
 ```
-Initially the free space is the whole dialog. Header is docked at the top of the free space and widgets inside the header flow down, each widget taking a space that is full width of the available space and the height is determined by the widget content size. On miDockEnd(), the free space of the parent dialog is shrank based on the contents in the header. This space is available on further docks.
+Initially the free space is the whole dialog. Header is docked at the top of the free space and widgets inside the header flow down, each widget taking a space that is full width of the available space and the height is determined by the widget content size. On `miDockEnd()`, the free space of the parent dialog is shrank based on the contents in the header. This space is available on further docks.
 
 Footer is handled the same way, but the widgets grow upwards. 
 
-If we used MI_LEFT_RIGHT on the footer, it would look on high level like this instead:
+If we used `MI_LEFT_RIGHT` on the footer, it would look on high level like this instead:
 
 ```
 +-----------+
@@ -154,7 +154,7 @@ If we used MI_LEFT_RIGHT on the footer, it would look on high level like this in
 Divs
 ----
 
-Divs divide the remaining free space into rows or columns; or divs. Widgets are assigned to one div at a time. When all the divs are full, new line is formed and divs filled again in order. The size of the divs can be fixed, or you can use MI_FLEX in which case the size is the remaining space divided equally across all flex elements. The div sizes are adjusted so that they always take the full space available.
+Divs divide the remaining free space into rows or columns; or divs. Widgets are assigned to one div at a time. When all the divs are full, new line is formed and divs filled again in order. The size of the divs can be fixed, or you can use `MI_FLEX` in which case the size is the remaining space divided equally across all flex elements. The div sizes are adjusted so that they always take the full space available.
 
 ```C
 float cols2[3] = {MI_FLEX, MI_ICONBUTTON_WIDTH, MI_BUTTON_WIDTH};
